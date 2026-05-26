@@ -5,11 +5,6 @@
 {% set lead_base = '/portal/' + portal_slug + '/leads' if portal_mode else '/leads' %}
 
 {% block nav_extra %}
-  {% if not portal_mode %}
-    <button class="btn btn-sm btn-outline-light" onclick="backfillNames()">
-      <i class="bi bi-person-fill-check me-1"></i>Backfill Names
-    </button>
-  {% endif %}
   {% if not portal_mode and sync_enabled %}
     {% if is_authenticated %}
       <span class="badge bg-success status-pill"><i class="bi bi-check-circle me-1"></i>Connected to Google</span>
@@ -215,13 +210,6 @@ function showToast(msg, type = 'primary') {
 }
 
 {% if not portal_mode %}
-async function backfillNames() {
-  const res = await fetch('/leads/backfill-names', { method: 'POST' });
-  const data = await res.json();
-  showToast(res.ok ? data.message : (data.detail || 'Backfill failed'), res.ok ? 'primary' : 'danger');
-  if (res.ok) setTimeout(() => location.reload(), 8000);
-}
-
 async function triggerLogin() {
   const res = await fetch('/auth/login', { method: 'POST' });
   const data = await res.json();

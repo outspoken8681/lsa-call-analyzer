@@ -53,6 +53,9 @@ _signer = URLSafeTimedSerializer(SECRET_KEY)
 # Pre-hash admin password at startup
 _admin_hash = bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()) if ADMIN_PASSWORD else b""
 
+# ── Scan-all state (in-memory, single-process) ────────────────────────────────
+_scan_state: dict = {"running": False, "current": "", "done": [], "total": 0}
+
 
 def _sign(value: str) -> str:
     return _signer.dumps(value)
@@ -408,6 +411,47 @@ async def root(request: Request):
     if ctx["current_client"]:
         return RedirectResponse("/leads", status_code=302)
     return RedirectResponse("/admin/clients", status_code=302)
+
+
+@app.get("/admin/scan-status")
+async def scan_status(request: Request):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
+    return _scan_state
+
+
+@app.post("/admin/scan-all")
+async def scan_all_clients(request: Request, background_tasks: BackgroundTasks):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
+    if not await ensure_auth():
+        raise HTTPException(status_code=401, detail="Not authenticated with Google.")
+    if _scan_state["running"]:
+        raise HTTPException(status_code=409, detail="Scan already in progress.")
+    clients = await get_all_clients()
+    eligible = [c for c in clients if c.get("lead_list_url")]
+    if not eligible:
+        raise HTTPException(status_code=400, detail="No clients have a lead list URL configured.")
+    background_tasks.add_task(_scan_all_clients_task, eligible)
+    return {"message": f"Scanning {len(eligible)} client(s) in background.", "total": len(eligible)}
+
+
+async def _scan_all_clients_task(clients: list[dict]):
+    _scan_state["running"] = True
+    _scan_state["done"] = []
+    _scan_state["total"] = len(clients)
+    for client in clients:
+        _scan_state["current"] = client["name"]
+        logger.info(f"[scan-all] Scanning {client['name']}...")
+        try:
+            await _scrape_and_process_all(client)
+        except Exception as e:
+            logger.error(f"[scan-all] Error scanning {client['name']}: {e}")
+        _scan_state["done"].append(client["name"])
+        logger.info(f"[scan-all] Done with {client['name']} ({len(_scan_state['done'])}/{len(clients)})")
+    _scan_state["running"] = False
+    _scan_state["current"] = ""
+    logger.info(f"[scan-all] All {len(clients)} client(s) scanned.")
 
 
 @app.get("/leads", response_class=HTMLResponse)
