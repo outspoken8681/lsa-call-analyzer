@@ -351,7 +351,7 @@ async def admin_delete_client(request: Request, client_id: int):
 
 @app.post("/admin/clients/{client_id}/select")
 async def admin_select_client(client_id: int):
-    response = RedirectResponse("/", status_code=302)
+    response = RedirectResponse("/leads", status_code=302)
     response.set_cookie("admin_client_id", _sign(str(client_id)), httponly=True, samesite="lax", max_age=86400 * 30)
     return response
 
