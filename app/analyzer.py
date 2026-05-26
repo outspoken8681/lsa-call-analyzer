@@ -43,7 +43,7 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
         content_label = "Message conversation"
         instructions = """Analyze this message lead and return a JSON object with these fields:
 - was_answered (true/false): did the business reply to the customer's message?
-- contact_name: the customer's first name if mentioned, otherwise null
+- contact_name: the customer's full name (first and last) if mentioned, otherwise null
 - qualification_score (1-5): 5=ready to book, 1=spam/wrong number
 - qualification_reason: 1-2 sentences explaining the score
 - call_summary: 2-4 sentences summarizing the message exchange and any next steps
@@ -55,7 +55,7 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
         content_label = "Call transcript"
         instructions = """Analyze this call and return a JSON object with these fields:
 - was_answered (true/false): did a human actually speak, or was it voicemail/missed?
-- contact_name: the customer's first name if mentioned in the call, otherwise null
+- contact_name: the customer's full name (first and last) if mentioned in the call, otherwise null
 - qualification_score (1-5): 5=ready to book, 1=spam/wrong number
 - qualification_reason: 1-2 sentences explaining the score
 - call_summary: 2-4 sentences of what was discussed and any next steps
