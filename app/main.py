@@ -33,6 +33,7 @@ from app.database import (
     upsert_lead,
 )
 from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list
+from app.r2 import get_audio_bytes as r2_get_audio
 from app.transcriber import transcribe_audio
 
 logging.basicConfig(
@@ -504,18 +505,26 @@ async def remove_lead(request: Request, lead_id: str):
 
 
 @app.get("/audio/{lead_id}")
-async def serve_audio(request: Request, lead_id: str):
+async def serve_audio(request: Request, lead_id: str, download: bool = False):
     ctx = await _admin_context(request)
     client = ctx["current_client"]
     if not client:
         raise HTTPException(status_code=400, detail="No client selected.")
     lead = await get_lead(client["id"], lead_id)
-    if not lead or not lead.get("audio_path"):
+    if not lead:
         raise HTTPException(status_code=404, detail="Audio not found")
-    path = Path(lead["audio_path"])
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found on disk")
-    return FileResponse(path, media_type="audio/mpeg")
+    headers = {}
+    if download:
+        name = (lead.get("caller_name") or lead_id).replace(" ", "_")
+        headers["Content-Disposition"] = f'attachment; filename="{name}.mp3"'
+    path = Path(lead["audio_path"]) if lead.get("audio_path") else None
+    if path and path.exists():
+        return FileResponse(path, media_type="audio/mpeg", headers=headers)
+    if lead.get("audio_url"):
+        data = await r2_get_audio(lead["audio_url"])
+        if data:
+            return Response(content=data, media_type="audio/mpeg", headers=headers)
+    raise HTTPException(status_code=404, detail="Audio not found")
 
 
 # ── Read-only client portal ───────────────────────────────────────────────────
@@ -597,19 +606,27 @@ async def portal_lead_detail(request: Request, slug: str, lead_id: str):
 
 
 @app.get("/portal/{slug}/audio/{lead_id}")
-async def portal_audio(request: Request, slug: str, lead_id: str):
+async def portal_audio(request: Request, slug: str, lead_id: str, download: bool = False):
     if _portal_slug(request) != slug:
         raise HTTPException(status_code=403, detail="Not authenticated")
     client = await get_client_by_slug(slug)
     if not client:
         raise HTTPException(status_code=404)
     lead = await get_lead(client["id"], lead_id)
-    if not lead or not lead.get("audio_path"):
+    if not lead:
         raise HTTPException(status_code=404, detail="Audio not found")
-    path = Path(lead["audio_path"])
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found on disk")
-    return FileResponse(path, media_type="audio/mpeg")
+    headers = {}
+    if download:
+        name = (lead.get("caller_name") or lead_id).replace(" ", "_")
+        headers["Content-Disposition"] = f'attachment; filename="{name}.mp3"'
+    path = Path(lead["audio_path"]) if lead.get("audio_path") else None
+    if path and path.exists():
+        return FileResponse(path, media_type="audio/mpeg", headers=headers)
+    if lead.get("audio_url"):
+        data = await r2_get_audio(lead["audio_url"])
+        if data:
+            return Response(content=data, media_type="audio/mpeg", headers=headers)
+    raise HTTPException(status_code=404, detail="Audio not found")
 
 
 # ── Debug ─────────────────────────────────────────────────────────────────────

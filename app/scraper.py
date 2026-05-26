@@ -19,6 +19,8 @@ from urllib.parse import parse_qs, urlparse
 
 from playwright.async_api import Page, async_playwright
 
+from app.r2 import upload_audio as r2_upload
+
 logger = logging.getLogger(__name__)
 
 AUTH_STATE_PATH = os.getenv("AUTH_STATE_PATH", "auth.json")
@@ -407,8 +409,11 @@ async def scrape_all_leads(client: dict, max_leads: int = 50) -> list[dict]:
                     existing_audio = client_audio_dir / f"{lead_id}.mp3"
                     if existing_audio.exists():
                         logger.info(f"Lead {lead_id}: audio already on disk — skipping download")
+                        r2_key = f"{client['slug']}/{lead_id}.mp3"
+                        uploaded = await r2_upload(str(existing_audio), r2_key)
                         lead.update({
                             "audio_path": str(existing_audio),
+                            "audio_url": r2_key if uploaded else lead.get("audio_url"),
                             "scrape_status": "completed",
                         })
                         results.append(lead)
@@ -518,10 +523,12 @@ async def scrape_all_leads(client: dict, max_leads: int = 50) -> list[dict]:
                 if response.ok:
                     audio_path.write_bytes(await response.body())
                     logger.info(f"Lead {lead_id}: audio saved ({audio_path.stat().st_size} bytes)")
+                    r2_key = f"{client['slug']}/{lead_id}.mp3"
+                    uploaded = await r2_upload(str(audio_path), r2_key)
                     metadata = await _extract_lead_detail_metadata(page)
                     lead.update({
                         **metadata,
-                        "audio_url": audio_url,
+                        "audio_url": r2_key if uploaded else audio_url,
                         "audio_path": str(audio_path),
                         "is_answered": 1,
                         "scrape_status": "completed",
@@ -648,12 +655,14 @@ async def scrape_lead_audio(client: dict, lead_id: str, lead_url: str) -> dict:
         response = await page.request.get(audio_url)
         if response.ok:
             audio_path.write_bytes(await response.body())
+            r2_key = f"{client['slug']}/{lead_id}.mp3"
+            uploaded = await r2_upload(str(audio_path), r2_key)
             metadata = await _extract_lead_detail_metadata(page)
             await browser.close()
             return {
                 **result,
                 **metadata,
-                "audio_url": audio_url,
+                "audio_url": r2_key if uploaded else audio_url,
                 "audio_path": str(audio_path),
                 "is_answered": 1,
                 "scrape_status": "completed",

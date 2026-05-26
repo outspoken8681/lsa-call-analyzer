@@ -91,13 +91,16 @@
     </div>
 
     <!-- Audio player (phone leads only) -->
-    {% if lead.audio_path and lead.lead_type != 'message' %}
+    {% if (lead.audio_path or lead.audio_url) and lead.lead_type != 'message' %}
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-body">
         <h6 class="fw-semibold mb-2"><i class="bi bi-play-circle me-2 text-primary"></i>Recording</h6>
-        <audio controls class="w-100" style="height:40px;">
+        <audio controls class="w-100 mb-2" style="height:40px;">
           <source src="{{ audio_base }}/{{ lead.id }}" type="audio/mpeg">
         </audio>
+        <a href="{{ audio_base }}/{{ lead.id }}?download=true" class="btn btn-outline-secondary btn-sm w-100">
+          <i class="bi bi-download me-1"></i>Download Recording
+        </a>
       </div>
     </div>
     {% endif %}
