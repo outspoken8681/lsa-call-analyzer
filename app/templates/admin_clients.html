@@ -156,7 +156,7 @@ async function scanAll() {
 
 function startPolling() {
   if (_scanPoller) return;
-  _scanPoller = setInterval(pollStatus, 3000);
+  _scanPoller = setInterval(pollStatus, 5000);
   pollStatus();
 }
 
@@ -194,12 +194,19 @@ async function pollStatus() {
   }
 }
 
-// Resume polling if a scan was already running when page loaded
+// On page load: check once. Only start polling if a scan is actively running.
 (async () => {
   try {
     const res = await fetch('/admin/scan-status');
     const s = await res.json();
-    if (s.running) startPolling();
+    if (s.running) {
+      // Show progress immediately, then start polling
+      document.getElementById('scan-progress').classList.remove('d-none');
+      document.getElementById('scan-headline').textContent = `Scanning: ${s.current}`;
+      const btn = document.getElementById('btn-scan-all');
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning…'; }
+      startPolling();
+    }
   } catch (e) {}
 })();
 {% endif %}
