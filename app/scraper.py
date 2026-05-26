@@ -309,7 +309,7 @@ async def get_lead_list(client: dict) -> list[dict]:
     return leads
 
 
-async def scrape_all_leads(client: dict, max_leads: int = 50) -> list[dict]:
+async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: set = None) -> list[dict]:
     """
     Scrape all phone leads for a client.
     client dict must have: slug, lead_list_url
@@ -404,6 +404,15 @@ async def scrape_all_leads(client: dict, max_leads: int = 50) -> list[dict]:
         for lead in all_leads[:max_leads]:
             lead_id = lead["id"]
             try:
+                # ── Skip message leads already fully analyzed ─────────────────
+                if lead.get("lead_type") == "message" and skip_message_ids and lead_id in skip_message_ids:
+                    logger.info(f"Lead {lead_id}: message already analyzed — skipping")
+                    lead.pop("transcription_status", None)
+                    lead.pop("analysis_status", None)
+                    lead["scrape_status"] = "completed"
+                    results.append(lead)
+                    continue
+
                 # ── Skip phone leads whose audio is already on disk ───────────
                 if lead.get("lead_type") != "message":
                     existing_audio = client_audio_dir / f"{lead_id}.mp3"

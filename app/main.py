@@ -215,9 +215,17 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
             logger.info(f"[{client['slug']}] New lead queued: {lead['id']}")
 
     # ── Step 2: Full scrape — visits each lead's detail page + downloads audio ──
+    # Build set of message leads already fully processed so scraper can skip them
+    all_existing = await get_all_leads(client_id, limit=500, offset=0)
+    done_message_ids = {
+        str(l["id"]) for l in all_existing
+        if l.get("lead_type") == "message"
+        and l.get("analysis_status") == "completed"
+        and l.get("transcript")
+    }
     logger.info(f"[{client['slug']}] Starting full scrape (max {max_leads})...")
     try:
-        leads = await scrape_all_leads(client, max_leads=max_leads)
+        leads = await scrape_all_leads(client, max_leads=max_leads, skip_message_ids=done_message_ids)
     except RuntimeError as e:
         logger.error(f"Scrape failed: {e}")
         return
