@@ -223,9 +223,10 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
         return
 
     for lead in leads:
-        await upsert_lead(client_id, lead)
         existing = await get_lead(client_id, lead["id"])
-        if existing and existing.get("analysis_status") == "completed":
+        already_done = existing and existing.get("analysis_status") == "completed"
+        await upsert_lead(client_id, lead)
+        if already_done:
             logger.info(f"Lead {lead['id']} already analyzed, skipping")
             continue
         is_message = lead.get("lead_type") == "message"

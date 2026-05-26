@@ -411,6 +411,9 @@ async def scrape_all_leads(client: dict, max_leads: int = 50) -> list[dict]:
                         logger.info(f"Lead {lead_id}: audio already on disk — skipping download")
                         r2_key = f"{client['slug']}/{lead_id}.mp3"
                         uploaded = await r2_upload(str(existing_audio), r2_key)
+                        # Drop default pending statuses so we don't overwrite completed ones in DB
+                        lead.pop("transcription_status", None)
+                        lead.pop("analysis_status", None)
                         lead.update({
                             "audio_path": str(existing_audio),
                             "audio_url": r2_key if uploaded else lead.get("audio_url"),
