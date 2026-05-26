@@ -496,6 +496,44 @@ async def trigger_scrape(request: Request, background_tasks: BackgroundTasks, ma
     return {"message": f"Scraping up to {max_leads} leads for {client['name']} in background."}
 
 
+@app.post("/leads/backfill-names")
+async def backfill_names(request: Request, background_tasks: BackgroundTasks):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
+    ctx = await _admin_context(request)
+    client = ctx["current_client"]
+    if not client:
+        raise HTTPException(status_code=400, detail="No client selected.")
+    background_tasks.add_task(_backfill_names_task, client["id"])
+    return {"message": "Name backfill started — this may take a minute."}
+
+
+async def _backfill_names_task(client_id: int):
+    """
+    For every lead that has no contact_name:
+      1. If Google gave a real name → copy it instantly (no API call).
+      2. Else if transcript exists → ask AI for the name only (cheap, max 64 tokens).
+    Never overwrites a name that was already set.
+    """
+    from app.analyzer import extract_contact_name
+    leads = await get_all_leads(client_id, limit=1000, offset=0)
+    updated = 0
+    for lead in leads:
+        if lead.get("contact_name"):
+            continue  # already has a name
+        google_name = _best_caller_name(lead)
+        if google_name:
+            await update_lead(client_id, lead["id"], {"contact_name": google_name})
+            updated += 1
+            continue
+        if lead.get("transcript"):
+            name = await extract_contact_name(lead["transcript"], lead)
+            if name:
+                await update_lead(client_id, lead["id"], {"contact_name": name})
+                updated += 1
+    logger.info(f"[client {client_id}] Name backfill complete — {updated} leads updated.")
+
+
 @app.post("/leads/{lead_id}/process")
 async def process_lead(request: Request, lead_id: str, background_tasks: BackgroundTasks):
     ctx = await _admin_context(request)

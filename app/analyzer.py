@@ -107,3 +107,38 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
             "analysis_status": "failed",
             "error_message": f"Analysis error: {str(e)}",
         }
+
+
+async def extract_contact_name(transcript: str, lead_metadata: dict = None) -> str | None:
+    """Lightweight call — extracts only the customer's full name from a transcript."""
+    if not transcript or not transcript.strip():
+        return None
+    is_message = (lead_metadata or {}).get("lead_type") == "message"
+    content_label = "Message conversation" if is_message else "Call transcript"
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Extract the customer's name from a service lead transcript. Return ONLY valid JSON.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"{content_label}:\n---\n{transcript}\n---\n\n"
+                        "Return a JSON object with one field:\n"
+                        "- contact_name: the customer's full name (first and last) if mentioned, otherwise null"
+                    ),
+                },
+            ],
+            max_tokens=64,
+            temperature=0,
+        )
+        result = json.loads(response.choices[0].message.content)
+        name = result.get("contact_name")
+        return name.strip() if name else None
+    except Exception as e:
+        logger.warning(f"Name extraction failed: {e}")
+        return None
