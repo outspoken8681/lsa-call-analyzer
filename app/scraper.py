@@ -25,6 +25,13 @@ AUTH_STATE_PATH = os.getenv("AUTH_STATE_PATH", "auth.json")
 AUDIO_DIR = Path(os.getenv("AUDIO_DIR", "audio"))
 LSA_BASE_URL = "https://ads.google.com/localservices/accountpicker"
 
+def _clean_charge_status(text: str | None) -> str | None:
+    """Strip Material icon names (e.g. 'help_outline') that Google appends to status text."""
+    if not text:
+        return text
+    return re.sub(r'\s+\w+_\w+', '', text).strip() or text
+
+
 # Shared state for the login flow
 _login_event: asyncio.Event | None = None
 _login_page = None
@@ -290,7 +297,7 @@ async def get_lead_list(client: dict) -> list[dict]:
             "job_type": cells[1] if len(cells) > 1 and cells[1] != "-" else None,
             "location": cells[3] if len(cells) > 3 and cells[3] != "-" else None,
             "call_date": _normalize_call_date(cells[6]) if len(cells) > 6 else None,
-            "charge_status": cells[5] if len(cells) > 5 else None,
+            "charge_status": _clean_charge_status(cells[5]) if len(cells) > 5 else None,
             "scrape_status": "pending",
             "transcription_status": "completed" if lead_type == "message" else "pending",
             "analysis_status": "pending",
@@ -383,7 +390,7 @@ async def scrape_all_leads(client: dict, max_leads: int = 50) -> list[dict]:
                 "job_type": cells[1] if len(cells) > 1 and cells[1] != "-" else None,
                 "location": cells[3] if len(cells) > 3 and cells[3] != "-" else None,
                 "call_date": _normalize_call_date(cells[6]) if len(cells) > 6 else None,
-                "charge_status": cells[5] if len(cells) > 5 else None,
+                "charge_status": _clean_charge_status(cells[5]) if len(cells) > 5 else None,
                 "scrape_status": "pending",
                 "transcription_status": "completed" if lead_type == "message" else "pending",
                 "analysis_status": "pending",
