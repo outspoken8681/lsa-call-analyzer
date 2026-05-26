@@ -45,8 +45,6 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
 - was_answered (true/false): did the business reply to the customer's message?
 - qualification_score (1-5): 5=ready to book, 1=spam/wrong number
 - qualification_reason: 1-2 sentences explaining the score
-- sentiment: "positive", "neutral", or "negative" — the customer's tone
-- sentiment_explanation: 1 sentence
 - call_summary: 2-4 sentences summarizing the message exchange and any next steps
 - service_requested: what service/job they were asking about (if mentioned)
 - follow_up_required (true/false): does the business still need to respond or take action?
@@ -58,8 +56,6 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
 - was_answered (true/false): did a human actually speak, or was it voicemail/missed?
 - qualification_score (1-5): 5=ready to book, 1=spam/wrong number
 - qualification_reason: 1-2 sentences explaining the score
-- sentiment: "positive", "neutral", or "negative"
-- sentiment_explanation: 1 sentence
 - call_summary: 2-4 sentences of what was discussed and any next steps
 - service_requested: what service/job they were asking about (if mentioned)
 - follow_up_required (true/false): is there a clear action item needed?
@@ -90,7 +86,7 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
         raw = response.choices[0].message.content
         result = json.loads(raw)
 
-        logger.info(f"Analysis complete. Score: {result.get('qualification_score')}/5, Sentiment: {result.get('sentiment')}")
+        logger.info(f"Analysis complete. Score: {result.get('qualification_score')}/5")
 
         return {
             "is_answered": 1 if result.get("was_answered") else 0,
