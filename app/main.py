@@ -362,6 +362,9 @@ async def admin_select_client(client_id: int):
 async def root(request: Request):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
+    ctx = await _admin_context(request)
+    if ctx["current_client"]:
+        return RedirectResponse("/leads", status_code=302)
     return RedirectResponse("/admin/clients", status_code=302)
 
 
