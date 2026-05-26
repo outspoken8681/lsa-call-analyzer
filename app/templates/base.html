@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}LSA Call Analyzer{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    body { background: #f8f9fa; }
+    .navbar { background: #1a73e8 !important; }
+    .navbar-brand, .nav-link { color: #fff !important; }
+    .badge-score-5 { background-color: #198754; }
+    .badge-score-4 { background-color: #5cb85c; }
+    .badge-score-3 { background-color: #f0ad4e; color: #212529; }
+    .badge-score-2 { background-color: #d9534f; }
+    .badge-score-1 { background-color: #843534; }
+    .status-pill { font-size: 0.75rem; }
+    .transcript-box {
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      padding: 1rem;
+      max-height: 400px;
+      overflow-y: auto;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .spinner-sm { width: 1rem; height: 1rem; }
+    .client-switcher .dropdown-toggle { color: #212529 !important; }
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg">
+    <div class="container-fluid px-4">
+      <a class="navbar-brand fw-semibold" href="{{ '/portal/' + portal_slug + '/leads' if portal_mode else '/' }}">
+        <i class="bi bi-telephone-fill me-2"></i>
+        {% if portal_mode %}
+          {{ current_client.name if current_client else 'LSA Call Analyzer' }}
+        {% else %}
+          LSA Call Analyzer
+        {% endif %}
+      </a>
+
+      <div class="ms-auto d-flex align-items-center gap-2">
+
+        {% if not portal_mode and all_clients %}
+        <!-- Client switcher dropdown -->
+        <div class="dropdown client-switcher">
+          <button class="btn btn-sm btn-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
+            <i class="bi bi-building me-1"></i>
+            {{ current_client.name if current_client else 'Select Client' }}
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            {% for c in all_clients %}
+            <li>
+              <form method="post" action="/admin/clients/{{ c.id }}/select" class="m-0">
+                <button type="submit" class="dropdown-item {% if current_client and current_client.id == c.id %}active{% endif %}">
+                  {{ c.name }}
+                </button>
+              </form>
+            </li>
+            {% endfor %}
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="/admin/clients"><i class="bi bi-gear me-1"></i>Manage Clients</a></li>
+          </ul>
+        </div>
+        {% endif %}
+
+        {% block nav_extra %}{% endblock %}
+
+        {% if not portal_mode %}
+        <form method="post" action="/admin/logout" class="m-0">
+          <button type="submit" class="btn btn-sm btn-light">
+            <i class="bi bi-box-arrow-right me-1"></i>Logout
+          </button>
+        </form>
+        {% endif %}
+
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid py-4 px-4">
+    {% block content %}{% endblock %}
+  </div>
+
+  {% block styles %}{% endblock %}
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

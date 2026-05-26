@@ -1,0 +1,12 @@
+.env
+auth.json
+audio/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.DS_Store
+lsa.db
+lsa_config.json
+debug_*.png

@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}Clients — LSA Call Analyzer{% endblock %}
+
+{% block nav_extra %}
+  <a href="/" class="btn btn-sm btn-light"><i class="bi bi-arrow-left me-1"></i>Dashboard</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h4 class="mb-0 fw-semibold">Manage Clients</h4>
+</div>
+
+<div class="row g-4">
+
+  <!-- Add client form -->
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3"><i class="bi bi-plus-circle me-2 text-primary"></i>Add Client</h6>
+        <form method="post" action="/admin/clients">
+          <div class="mb-2">
+            <label class="form-label small fw-medium">Client Name</label>
+            <input type="text" name="name" id="new-client-name" class="form-control form-control-sm" placeholder="Morrison & Hughes" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small fw-medium">Slug <span class="text-muted fw-normal">(URL-safe, no spaces)</span></label>
+            <input type="text" name="slug" id="new-client-slug" class="form-control form-control-sm" placeholder="morrison-hughes" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small fw-medium">Lead List URL</label>
+            <input type="url" name="lead_list_url" class="form-control form-control-sm" placeholder="https://ads.google.com/localservices/inbox?cid=...">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-medium">Portal Password <span class="text-muted fw-normal">(leave blank to disable portal)</span></label>
+            <input type="password" name="portal_password" class="form-control form-control-sm">
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm w-100">Add Client</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Client list -->
+  <div class="col-lg-8">
+    {% if not all_clients %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-building display-4 d-block mb-3"></i>
+        <p class="mb-0">No clients yet. Add your first client to get started.</p>
+      </div>
+    </div>
+    {% else %}
+    {% for client in all_clients %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+          <div>
+            <h6 class="fw-semibold mb-0">{{ client.name }}</h6>
+            <small class="text-muted font-monospace">{{ client.slug }}</small>
+          </div>
+          <div class="d-flex gap-2">
+            <form method="post" action="/admin/clients/{{ client.id }}/select">
+              <button type="submit" class="btn btn-sm {% if current_client and current_client.id == client.id %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+                {% if current_client and current_client.id == client.id %}
+                  <i class="bi bi-check-lg me-1"></i>Active
+                {% else %}
+                  Switch to
+                {% endif %}
+              </button>
+            </form>
+            <form method="post" action="/admin/clients/{{ client.id }}/delete" onsubmit="return confirm('Delete {{ client.name }}? This will delete all their leads.')">
+              <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+            </form>
+          </div>
+        </div>
+
+        <form method="post" action="/admin/clients/{{ client.id }}/update">
+          <div class="row g-2">
+            <div class="col-sm-6">
+              <label class="form-label small fw-medium">Name</label>
+              <input type="text" name="name" class="form-control form-control-sm" value="{{ client.name }}" required>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label small fw-medium">Slug</label>
+              <input type="text" name="slug" class="form-control form-control-sm" value="{{ client.slug }}" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-medium">Lead List URL</label>
+              <input type="url" name="lead_list_url" class="form-control form-control-sm" value="{{ client.lead_list_url or '' }}">
+            </div>
+            <div class="col-sm-8">
+              <label class="form-label small fw-medium">New Portal Password <span class="text-muted fw-normal">(leave blank to keep current)</span></label>
+              <input type="password" name="portal_password" class="form-control form-control-sm">
+            </div>
+            <div class="col-sm-4 d-flex align-items-end">
+              <button type="submit" class="btn btn-sm btn-outline-primary w-100">Save</button>
+            </div>
+            {% if client.portal_password %}
+            {% set portal_url = base_url ~ '/portal/' ~ client.slug %}
+            <div class="col-12">
+              <small class="text-muted">
+                <i class="bi bi-globe me-1"></i>Portal: <a href="{{ portal_url }}" target="_blank">{{ portal_url }}</a>
+                {% if client.portal_password_plain %}
+                  &nbsp;&middot;&nbsp;<i class="bi bi-key me-1"></i>Password: <code>{{ client.portal_password_plain }}</code>
+                {% endif %}
+              </small>
+            </div>
+            {% endif %}
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toSlug(str) {
+  return str
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+const nameInput = document.getElementById('new-client-name');
+const slugInput = document.getElementById('new-client-slug');
+let slugEdited = false;
+
+nameInput.addEventListener('input', () => {
+  if (!slugEdited) {
+    slugInput.value = toSlug(nameInput.value);
+  }
+});
+
+slugInput.addEventListener('input', () => {
+  // If they manually edit the slug, stop auto-filling it
+  slugEdited = slugInput.value !== toSlug(nameInput.value);
+});
+</script>
+{% endblock %}

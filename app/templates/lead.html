@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+
+{% block title %}Lead {{ lead.id }} — {% if portal_mode %}{{ current_client.name }}{% else %}LSA Call Analyzer{% endif %}{% endblock %}
+
+{% set lead_base = '/portal/' + portal_slug + '/leads' if portal_mode else '/leads' %}
+{% set audio_base = '/portal/' + portal_slug + '/audio' if portal_mode else '/audio' %}
+{% set back_url = lead_base if portal_mode else '/' %}
+
+{% block nav_extra %}
+  <a id="btn-prev" href="#" class="btn btn-sm btn-light disabled" aria-label="Previous lead">
+    <i class="bi bi-chevron-left"></i>
+  </a>
+  <a href="{{ back_url }}" class="btn btn-sm btn-light"><i class="bi bi-list me-1"></i>All Leads</a>
+  <a id="btn-next" href="#" class="btn btn-sm btn-light disabled" aria-label="Next lead">
+    <i class="bi bi-chevron-right"></i>
+  </a>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- Left column: metadata + actions -->
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <h5 class="card-title fw-semibold mb-3">
+          <i class="bi bi-person-circle me-2 text-primary"></i>{{ lead.caller_name or 'Unknown Caller' }}
+        </h5>
+        <dl class="row mb-0 small">
+          <dt class="col-5 text-muted">Phone</dt>
+          <dd class="col-7">{{ lead.caller_phone or '—' }}</dd>
+
+          <dt class="col-5 text-muted">Location</dt>
+          <dd class="col-7">{{ lead.location or '—' }}</dd>
+
+          <dt class="col-5 text-muted">Date</dt>
+          <dd class="col-7">{{ lead.call_date | fmt_call_date }}</dd>
+
+          <dt class="col-5 text-muted">Duration</dt>
+          <dd class="col-7">
+            {% if lead.call_duration_seconds %}
+              {{ lead.call_duration_seconds // 60 }}:{{ '%02d' % (lead.call_duration_seconds % 60) }}
+            {% else %}—{% endif %}
+          </dd>
+
+          <dt class="col-5 text-muted">Type</dt>
+          <dd class="col-7">
+            {% if lead.lead_type == 'message' %}
+              <span class="text-info"><i class="bi bi-chat-left-text-fill me-1"></i>Message</span>
+            {% else %}
+              <span><i class="bi bi-telephone-fill me-1"></i>Phone call</span>
+            {% endif %}
+          </dd>
+
+          {% if lead.lead_type != 'message' %}
+          <dt class="col-5 text-muted">Answered</dt>
+          <dd class="col-7">
+            {% if lead.is_answered is not none %}
+              {% if lead.is_answered %}
+                <span class="text-success"><i class="bi bi-check-circle-fill"></i> Yes</span>
+              {% else %}
+                <span class="text-danger"><i class="bi bi-x-circle-fill"></i> Missed</span>
+              {% endif %}
+            {% else %}—{% endif %}
+          </dd>
+          {% endif %}
+
+          <dt class="col-5 text-muted">Job Type</dt>
+          <dd class="col-7">{{ lead.job_type or '—' }}</dd>
+
+          <dt class="col-5 text-muted">Charge Status</dt>
+          <dd class="col-7">
+            {% if lead.charge_status %}
+              {% if 'charged' in lead.charge_status.lower() and 'not' not in lead.charge_status.lower() %}
+                <span class="text-primary fw-medium">{{ lead.charge_status }}</span>
+              {% else %}
+                <span class="text-muted">{{ lead.charge_status }}</span>
+              {% endif %}
+            {% else %}—{% endif %}
+          </dd>
+
+          <dt class="col-5 text-muted">Lead ID</dt>
+          <dd class="col-7 font-monospace text-muted">{{ lead.id }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Audio player (phone leads only) -->
+    {% if lead.audio_path and lead.lead_type != 'message' %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-2"><i class="bi bi-play-circle me-2 text-primary"></i>Recording</h6>
+        <audio controls class="w-100" style="height:40px;">
+          <source src="{{ audio_base }}/{{ lead.id }}" type="audio/mpeg">
+        </audio>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Pipeline status -->
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3">Pipeline Status</h6>
+        {% macro step_badge(status) %}
+          {% if status == 'completed' %}<span class="badge bg-success">Done</span>
+          {% elif status == 'in_progress' %}<span class="badge bg-primary"><span class="spinner-border spinner-sm me-1"></span>Running</span>
+          {% elif status == 'failed' %}<span class="badge bg-danger">Failed</span>
+          {% else %}<span class="badge bg-secondary">Pending</span>{% endif %}
+        {% endmacro %}
+        <div class="d-flex justify-content-between align-items-center mb-2 small">
+          <span><i class="bi bi-cloud-download me-1"></i>Audio scrape</span>
+          {{ step_badge(lead.scrape_status) }}
+        </div>
+        <div class="d-flex justify-content-between align-items-center mb-2 small">
+          <span><i class="bi bi-mic me-1"></i>Transcription</span>
+          {{ step_badge(lead.transcription_status) }}
+        </div>
+        <div class="d-flex justify-content-between align-items-center small">
+          <span><i class="bi bi-robot me-1"></i>AI Analysis</span>
+          {{ step_badge(lead.analysis_status) }}
+        </div>
+
+        {% set has_active_error = lead.error_message and (
+          lead.scrape_status == 'failed' or
+          lead.transcription_status == 'failed' or
+          lead.analysis_status == 'failed'
+        ) %}
+        {% if has_active_error %}
+        <div class="alert alert-danger mt-3 mb-0 small py-2">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ lead.error_message }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Actions (admin only) -->
+    {% if not portal_mode %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body d-grid gap-2">
+        <button class="btn btn-primary btn-sm" onclick="processLead()">
+          <i class="bi bi-play-fill me-1"></i>Run Full Pipeline
+        </button>
+        {% if lead.transcript %}
+        <button class="btn btn-outline-secondary btn-sm" onclick="reanalyze()">
+          <i class="bi bi-arrow-clockwise me-1"></i>Re-analyze Only
+        </button>
+        {% endif %}
+        {% if lead.lead_url %}
+        <a href="{{ lead.lead_url }}" target="_blank" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open in Google LSA
+        </a>
+        {% endif %}
+        <button class="btn btn-outline-danger btn-sm" onclick="deleteLead()">
+          <i class="bi bi-trash me-1"></i>Remove Lead
+        </button>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Right column: analysis + transcript -->
+  <div class="col-lg-8">
+
+    {% if lead.analysis_status == 'completed' and lead.call_summary %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <h5 class="card-title fw-semibold mb-3"><i class="bi bi-robot me-2 text-primary"></i>AI Analysis</h5>
+
+        <div class="row g-3 mb-3">
+          <div class="col-sm-6 text-center">
+            <div class="fs-1 fw-bold
+              {% if lead.qualification_score >= 4 %}text-success
+              {% elif lead.qualification_score == 3 %}text-warning
+              {% else %}text-danger{% endif %}">
+              {{ lead.qualification_score }}<span class="fs-5 text-muted">/5</span>
+            </div>
+            <div class="small text-muted">Lead Score</div>
+          </div>
+          <div class="col-sm-6 text-center">
+            {% if lead.analysis_data and lead.analysis_data.follow_up_required %}
+              <div class="fs-1 text-warning"><i class="bi bi-bell-fill"></i></div>
+              <div class="small text-muted">Follow-up needed</div>
+            {% else %}
+              <div class="fs-1 text-success"><i class="bi bi-check2-circle"></i></div>
+              <div class="small text-muted">No follow-up</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <hr>
+
+        <div class="mb-3">
+          <div class="small fw-semibold text-muted text-uppercase mb-1">Summary</div>
+          <p class="mb-0">{{ lead.call_summary }}</p>
+        </div>
+
+        {% if lead.qualification_reason %}
+        <div class="mb-3">
+          <div class="small fw-semibold text-muted text-uppercase mb-1">Lead Quality</div>
+          <p class="mb-0 small">{{ lead.qualification_reason }}</p>
+        </div>
+        {% endif %}
+
+        {% if lead.analysis_data and lead.analysis_data.follow_up_notes %}
+        <div class="mb-0">
+          <div class="small fw-semibold text-muted text-uppercase mb-1">Follow-up Notes</div>
+          <p class="mb-0 small text-warning">
+            <i class="bi bi-bell-fill me-1"></i>{{ lead.analysis_data.follow_up_notes }}
+          </p>
+        </div>
+        {% endif %}
+
+        {% if lead.analysis_data and lead.analysis_data.service_requested %}
+        <div class="mt-3">
+          <div class="small fw-semibold text-muted text-uppercase mb-1">Service Requested</div>
+          <p class="mb-0 small">{{ lead.analysis_data.service_requested }}</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% elif lead.analysis_status == 'in_progress' %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body text-center text-muted py-4">
+        <div class="spinner-border text-primary mb-2" role="status"></div>
+        <p class="mb-0">Analysis in progress...</p>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Transcript / Message History -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title fw-semibold mb-3">
+          {% if lead.lead_type == 'message' %}
+            <i class="bi bi-chat-left-text me-2 text-info"></i>Message History
+          {% else %}
+            <i class="bi bi-chat-text me-2 text-primary"></i>Transcript
+          {% endif %}
+        </h5>
+        {% if lead.transcript %}
+          <div class="transcript-box">{{ lead.transcript }}</div>
+        {% elif lead.transcription_status == 'in_progress' %}
+          <div class="text-center text-muted py-3">
+            <div class="spinner-border text-primary mb-2" role="status"></div>
+            <p class="mb-0">Transcribing audio...</p>
+          </div>
+        {% else %}
+          <p class="text-muted mb-0">
+            {% if lead.lead_type == 'message' %}No message content yet. Run the pipeline to retrieve it.
+            {% else %}No transcript yet. Run the pipeline to generate one.{% endif %}
+          </p>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toast" class="toast align-items-center text-bg-primary border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toast-msg"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const LEAD_ID = "{{ lead.id }}";
+const PORTAL_MODE = {{ 'true' if portal_mode else 'false' }};
+const LEAD_BASE = "{{ lead_base }}";
+
+// ── Prev / Next navigation ────────────────────────────────────────────────────
+(function () {
+  const order = JSON.parse(localStorage.getItem('lsa_lead_order') || '[]');
+  const idx = order.indexOf(LEAD_ID);
+  if (idx === -1) return;
+
+  const prevBtn = document.getElementById('btn-prev');
+  const nextBtn = document.getElementById('btn-next');
+
+  if (idx > 0) {
+    prevBtn.href = `${LEAD_BASE}/${order[idx - 1]}`;
+    prevBtn.classList.remove('disabled');
+  }
+  if (idx < order.length - 1) {
+    nextBtn.href = `${LEAD_BASE}/${order[idx + 1]}`;
+    nextBtn.classList.remove('disabled');
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'ArrowLeft' && !prevBtn.classList.contains('disabled')) window.location.href = prevBtn.href;
+    if (e.key === 'ArrowRight' && !nextBtn.classList.contains('disabled')) window.location.href = nextBtn.href;
+  });
+})();
+
+function showToast(msg, type = 'primary') {
+  const el = document.getElementById('toast');
+  el.className = `toast align-items-center text-bg-${type} border-0`;
+  document.getElementById('toast-msg').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(el, { delay: 4000 }).show();
+}
+
+{% if not portal_mode %}
+async function processLead() {
+  const res = await fetch(`/leads/${LEAD_ID}/process`, { method: 'POST' });
+  const data = await res.json();
+  showToast(data.message || data.detail, res.ok ? 'primary' : 'danger');
+  if (res.ok) setTimeout(() => location.reload(), 6000);
+}
+
+async function reanalyze() {
+  const res = await fetch(`/leads/${LEAD_ID}/reanalyze`, { method: 'POST' });
+  const data = await res.json();
+  showToast(data.message || data.detail, res.ok ? 'primary' : 'danger');
+  if (res.ok) setTimeout(() => location.reload(), 5000);
+}
+
+async function deleteLead() {
+  if (!confirm('Remove this lead? This cannot be undone.')) return;
+  const res = await fetch(`/leads/${LEAD_ID}`, { method: 'DELETE' });
+  if (res.ok) {
+    window.location.href = '/';
+  } else {
+    showToast('Delete failed', 'danger');
+  }
+}
+{% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+
+{% block title %}{% if portal_mode %}{{ current_client.name }} — Call Reports{% else %}Dashboard — LSA Call Analyzer{% endif %}{% endblock %}
+
+{% set lead_base = '/portal/' + portal_slug + '/leads' if portal_mode else '/leads' %}
+
+{% block nav_extra %}
+  {% if not portal_mode %}
+    {% if is_authenticated %}
+      <span class="badge bg-success status-pill"><i class="bi bi-check-circle me-1"></i>Connected to Google</span>
+      <button class="btn btn-sm btn-light" onclick="triggerScrape()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Sync Leads
+      </button>
+    {% else %}
+      <span class="badge bg-warning text-dark status-pill"><i class="bi bi-exclamation-circle me-1"></i>Not authenticated</span>
+      <button class="btn btn-sm btn-light" id="btn-connect" onclick="triggerLogin()">
+        <i class="bi bi-google me-1"></i>Connect Google Account
+      </button>
+      <button class="btn btn-sm btn-success d-none" id="btn-confirm" onclick="confirmLogin()">
+        <i class="bi bi-check-lg me-1"></i>Confirm — I'm on the right account
+      </button>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <h4 class="mb-0 fw-semibold">Call Leads</h4>
+    <small class="text-muted">{{ total }} total lead{{ 's' if total != 1 else '' }}</small>
+  </div>
+</div>
+
+{% if not leads %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-telephone-x display-4 d-block mb-3"></i>
+    <p class="mb-2 fs-5">No leads yet.</p>
+    {% if not portal_mode %}
+      {% if is_authenticated %}
+        <p>Click <strong>Sync Leads</strong> to pull your calls from Google Local Services Ads.</p>
+      {% else %}
+        <p>Click <strong>Connect Google Account</strong> to get started.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr id="sort-row">
+          <th data-col="0" class="sortable">Caller <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="1" class="sortable">Job Type <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="2" class="sortable">Location <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="3" class="sortable" data-dir="desc">Date <i class="bi bi-arrow-down sort-icon active"></i></th>
+          <th data-col="4" class="sortable">Duration <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="5" class="sortable">Answered <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="6" class="sortable">Charged <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="7" class="sortable">Score <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="8" class="sortable">Status <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="9" class="sortable">Service Requested <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="10" class="sortable">Lead ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="leads-tbody">
+        {% for lead in leads %}
+        <tr>
+          <td data-value="{{ (lead.caller_name or lead.caller_phone or '') | lower }}" class="text-nowrap">
+            <div class="fw-medium">{{ lead.caller_name or '—' }}</div>
+            <small class="text-muted">{{ lead.caller_phone or '' }}</small>
+          </td>
+          <td class="small text-muted" data-value="{{ (lead.job_type or '') | lower }}">{{ lead.job_type or '—' }}</td>
+          <td class="small text-muted" data-value="{{ (lead.location or '') | lower }}">{{ lead.location or '—' }}</td>
+          <td class="text-nowrap text-muted small" data-value="{{ lead.call_date or '' }}">{{ lead.call_date | fmt_call_date }}</td>
+          <td class="text-muted small" data-value="{{ lead.call_duration_seconds or 0 }}">
+            {% if lead.call_duration_seconds %}
+              {{ lead.call_duration_seconds // 60 }}:{{ '%02d' % (lead.call_duration_seconds % 60) }}
+            {% else %}—{% endif %}
+          </td>
+          <td data-value="{{ 1 if lead.is_answered else 0 }}">
+            {% if lead.lead_type == 'message' %}
+              <span class="text-info small"><i class="bi bi-chat-left-text-fill me-1"></i>Message</span>
+            {% elif lead.is_answered is not none %}
+              {% if lead.is_answered %}
+                <span class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Yes</span>
+              {% else %}
+                <span class="text-danger small"><i class="bi bi-x-circle-fill me-1"></i>Missed</span>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td class="small" data-value="{{ (lead.charge_status or '') | lower }}">
+            {% if lead.charge_status %}
+              {% if 'charged' in lead.charge_status.lower() and 'not' not in lead.charge_status.lower() %}
+                <span class="text-primary fw-medium">{{ lead.charge_status }}</span>
+              {% else %}
+                <span class="text-muted">{{ lead.charge_status }}</span>
+              {% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td data-value="{{ lead.qualification_score or 0 }}">
+            {% if lead.qualification_score %}
+              <span class="badge badge-score-{{ lead.qualification_score }}">
+                {{ lead.qualification_score }}/5
+              </span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td data-value="{{ lead.analysis_status or '' }}">
+            {% set overall = lead.analysis_status %}
+            {% if overall == 'completed' %}
+              <span class="badge bg-success status-pill">Done</span>
+            {% elif overall in ('in_progress', 'pending') and lead.scrape_status == 'in_progress' %}
+              <span class="badge bg-primary status-pill"><span class="spinner-border spinner-sm me-1"></span>Scraping</span>
+            {% elif overall in ('in_progress', 'pending') and lead.transcription_status == 'in_progress' %}
+              <span class="badge bg-primary status-pill"><span class="spinner-border spinner-sm me-1"></span>Transcribing</span>
+            {% elif overall == 'in_progress' %}
+              <span class="badge bg-primary status-pill"><span class="spinner-border spinner-sm me-1"></span>Analyzing</span>
+            {% elif lead.scrape_status == 'failed' or lead.transcription_status == 'failed' or overall == 'failed' %}
+              <span class="badge bg-danger status-pill">Error</span>
+            {% else %}
+              <span class="badge bg-secondary status-pill">Pending</span>
+            {% endif %}
+          </td>
+          <td class="small text-muted" data-value="{{ (lead.analysis_data.service_requested if lead.analysis_data else '') | lower }}">
+            {{ lead.analysis_data.service_requested if lead.analysis_data and lead.analysis_data.service_requested else '—' }}
+          </td>
+          <td class="font-monospace text-muted small" data-value="{{ lead.id }}">{{ lead.id }}</td>
+          <td class="text-nowrap">
+            <a href="{{ lead_base }}/{{ lead.id }}" class="btn btn-sm btn-outline-secondary me-1 view-lead-btn">
+              View <i class="bi bi-arrow-right"></i>
+            </a>
+            {% if not portal_mode %}
+            <button class="btn btn-sm btn-outline-danger" onclick="deleteLead('{{ lead.id }}', this)">
+              <i class="bi bi-trash"></i>
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total_pages > 1 %}
+<nav class="mt-3 d-flex justify-content-center">
+  <ul class="pagination">
+    {% for p in range(1, total_pages + 1) %}
+    <li class="page-item {% if p == page %}active{% endif %}">
+      <a class="page-link" href="{{ lead_base }}?page={{ p }}">{{ p }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+{% endif %}
+
+<!-- Toast notifications -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toast" class="toast align-items-center text-bg-primary border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toast-msg"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block styles %}
+<style>
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+th.sortable:hover { background-color: #e9ecef; }
+.sort-icon { font-size: .7rem; opacity: .35; margin-left: 2px; }
+.sort-icon.active { opacity: 1; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PORTAL_MODE = {{ 'true' if portal_mode else 'false' }};
+
+function showToast(msg, type = 'primary') {
+  const el = document.getElementById('toast');
+  el.className = `toast align-items-center text-bg-${type} border-0`;
+  document.getElementById('toast-msg').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(el, { delay: 4000 }).show();
+}
+
+{% if not portal_mode %}
+async function triggerLogin() {
+  const res = await fetch('/auth/login', { method: 'POST' });
+  const data = await res.json();
+  showToast(data.message, 'warning');
+  document.getElementById('btn-connect').classList.add('d-none');
+  document.getElementById('btn-confirm').classList.remove('d-none');
+}
+
+async function confirmLogin() {
+  const res = await fetch('/auth/confirm', { method: 'POST' });
+  const data = await res.json();
+  if (data.success) {
+    showToast(data.message, 'success');
+    setTimeout(() => location.reload(), 2000);
+  } else {
+    showToast(data.message, 'danger');
+  }
+}
+
+async function triggerScrape() {
+  const res = await fetch('/scrape', { method: 'POST' });
+  if (res.ok) {
+    const data = await res.json();
+    showToast(data.message);
+    setTimeout(() => location.reload(), 5000);
+  } else {
+    const data = await res.json();
+    showToast(data.detail || 'Scrape failed', 'danger');
+  }
+}
+
+async function deleteLead(leadId, btn) {
+  if (!confirm('Remove this lead from the list?')) return;
+  const res = await fetch(`/leads/${leadId}`, { method: 'DELETE' });
+  if (res.ok) {
+    btn.closest('tr').remove();
+  } else {
+    showToast('Delete failed', 'danger');
+  }
+}
+{% endif %}
+
+// ── Table sorting ─────────────────────────────────────────────────────────────
+(function () {
+  const tbody = document.getElementById('leads-tbody');
+  if (!tbody) return;
+
+  let currentCol = 3;
+  let currentDir = 'desc';
+
+  function cellValue(row, col) {
+    const td = row.querySelectorAll('td')[col];
+    if (!td) return '';
+    return td.dataset.value !== undefined ? td.dataset.value : td.innerText.trim().toLowerCase();
+  }
+
+  function compare(a, b, col, dir) {
+    const va = cellValue(a, col);
+    const vb = cellValue(b, col);
+    const numA = parseFloat(va), numB = parseFloat(vb);
+    let result;
+    if (!isNaN(numA) && !isNaN(numB)) {
+      result = numA - numB;
+    } else {
+      // Try date comparison — handles ISO, "5/22/26 12:45 PM", "May 21, 2026 at 3:14 PM"
+      const dateA = new Date(va.replace(' at ', ' '));
+      const dateB = new Date(vb.replace(' at ', ' '));
+      if (!isNaN(dateA) && !isNaN(dateB)) {
+        result = dateA - dateB;
+      } else {
+        result = va.localeCompare(vb);
+      }
+    }
+    return dir === 'asc' ? result : -result;
+  }
+
+  function updateIcons(activeCol, dir) {
+    document.querySelectorAll('#sort-row th.sortable').forEach(th => {
+      const icon = th.querySelector('.sort-icon');
+      const col = parseInt(th.dataset.col);
+      if (col === activeCol) {
+        icon.className = `bi bi-arrow-${dir === 'asc' ? 'up' : 'down'} sort-icon active`;
+      } else {
+        icon.className = 'bi bi-arrow-down-up sort-icon';
+      }
+    });
+  }
+
+  function saveOrder() {
+    const ids = Array.from(tbody.querySelectorAll('tr')).map(tr => {
+      const a = tr.querySelector('a.view-lead-btn');
+      if (!a) return null;
+      const href = a.getAttribute('href');
+      return href.split('/leads/')[1] || null;
+    }).filter(Boolean);
+    localStorage.setItem('lsa_lead_order', JSON.stringify(ids));
+  }
+
+  function sortTable(col, dir) {
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => compare(a, b, col, dir));
+    rows.forEach(r => tbody.appendChild(r));
+    updateIcons(col, dir);
+    saveOrder();
+  }
+
+  document.querySelectorAll('#sort-row th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = parseInt(th.dataset.col);
+      if (col === currentCol) {
+        currentDir = currentDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        currentCol = col;
+        currentDir = 'asc';
+      }
+      sortTable(currentCol, currentDir);
+    });
+  });
+
+  updateIcons(currentCol, currentDir);
+  saveOrder();
+})();
+</script>
+{% endblock %}
