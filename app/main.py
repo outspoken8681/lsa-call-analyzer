@@ -151,9 +151,22 @@ async def _admin_context(request: Request) -> dict:
 
 _UNKNOWN_NAMES = {"unknown caller", "unknown", ""}
 
-def _is_real_caller_name(name: str | None) -> bool:
-    """Return True when Google gave us an actual name, not a placeholder."""
-    return bool(name) and name.strip().lower() not in _UNKNOWN_NAMES
+def _best_caller_name(lead: dict) -> str | None:
+    """
+    Return the best Google-provided name for a lead, or None.
+    - For phone leads: uses caller_name (rare) or skips — phone number is not a name.
+    - For message leads: uses caller_name (new scraper) or falls back to caller_phone
+      (old scraper stored name there by mistake).
+    """
+    name = (lead.get("caller_name") or "").strip()
+    if name and name.lower() not in _UNKNOWN_NAMES:
+        return name
+    # Legacy: message leads scraped before the fix had name stored in caller_phone
+    if lead.get("lead_type") == "message":
+        phone_field = (lead.get("caller_phone") or "").strip()
+        if phone_field and any(c.isalpha() for c in phone_field):
+            return phone_field
+    return None
 
 
 async def _process_lead(client_id: int, lead_id: str):
@@ -201,8 +214,9 @@ async def _process_lead(client_id: int, lead_id: str):
     if lead.get("analysis_status") != "completed":
         await update_lead(client_id, lead_id, {"analysis_status": "in_progress"})
         analysis_result = await analyze_transcript(lead.get("transcript", ""), lead)
-        if _is_real_caller_name(lead.get("caller_name")):
-            analysis_result["contact_name"] = lead["caller_name"].strip()
+        google_name = _best_caller_name(lead)
+        if google_name:
+            analysis_result["contact_name"] = google_name
         await update_lead(client_id, lead_id, analysis_result)
 
 
@@ -245,8 +259,9 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
         existing = await get_lead(client_id, lead["id"])
         already_done = existing and existing.get("analysis_status") == "completed"
         # If Google gave us a real name and contact_name not already set, copy it over
-        if _is_real_caller_name(lead.get("caller_name")) and not (existing and existing.get("contact_name")):
-            lead["contact_name"] = lead["caller_name"].strip()
+        google_name = _best_caller_name(lead)
+        if google_name and not (existing and existing.get("contact_name")):
+            lead["contact_name"] = google_name
         await upsert_lead(client_id, lead)
         if already_done:
             logger.info(f"Lead {lead['id']} already analyzed, skipping")
@@ -280,8 +295,9 @@ async def _transcribe_and_analyze(client_id: int, lead_id: str):
     if lead.get("analysis_status") != "completed":
         await update_lead(client_id, lead_id, {"analysis_status": "in_progress"})
         result = await analyze_transcript(lead.get("transcript", ""), lead)
-        if _is_real_caller_name(lead.get("caller_name")):
-            result["contact_name"] = lead["caller_name"].strip()
+        google_name = _best_caller_name(lead)
+        if google_name:
+            result["contact_name"] = google_name
         await update_lead(client_id, lead_id, result)
 
 
@@ -508,8 +524,9 @@ async def reanalyze_lead(request: Request, lead_id: str, background_tasks: Backg
 
     async def _reanalyze():
         result = await analyze_transcript(lead["transcript"], lead)
-        if _is_real_caller_name(lead.get("caller_name")):
-            result["contact_name"] = lead["caller_name"].strip()
+        google_name = _best_caller_name(lead)
+        if google_name:
+            result["contact_name"] = google_name
         await update_lead(client["id"], lead_id, result)
 
     background_tasks.add_task(_reanalyze)
