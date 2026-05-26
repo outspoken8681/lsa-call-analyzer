@@ -51,17 +51,18 @@
     <table class="table table-hover mb-0 align-middle">
       <thead class="table-light">
         <tr id="sort-row">
-          <th data-col="0" class="sortable">Caller <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="1" class="sortable">Job Type <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="2" class="sortable">Location <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="3" class="sortable" data-dir="desc">Date <i class="bi bi-arrow-down sort-icon active"></i></th>
-          <th data-col="4" class="sortable">Duration <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="5" class="sortable">Answered <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="6" class="sortable">Charged <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="7" class="sortable">Score <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="8" class="sortable">Status <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="9" class="sortable">Service Requested <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="10" class="sortable">Lead ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="0" class="sortable">Caller ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="1" class="sortable">Name <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="2" class="sortable">Job Type <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="3" class="sortable">Location <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="4" class="sortable" data-dir="desc">Date <i class="bi bi-arrow-down sort-icon active"></i></th>
+          <th data-col="5" class="sortable">Duration <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="6" class="sortable">Answered <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="7" class="sortable">Charged <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="8" class="sortable">Score <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="9" class="sortable">Status <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="10" class="sortable">Service Requested <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="11" class="sortable">Lead ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
           <th></th>
         </tr>
       </thead>
@@ -71,6 +72,12 @@
           <td data-value="{{ (lead.caller_name or lead.caller_phone or '') | lower }}" class="text-nowrap">
             <div class="fw-medium">{{ lead.caller_name or '—' }}</div>
             <small class="text-muted">{{ lead.caller_phone or '' }}</small>
+          </td>
+          <td data-value="{{ (lead.contact_name or '') | lower }}" class="text-nowrap name-cell" data-lead-id="{{ lead.id }}">
+            <span class="name-display">{{ lead.contact_name or '—' }}</span>
+            {% if not portal_mode %}
+            <input type="text" class="name-input form-control form-control-sm d-none" value="{{ lead.contact_name or '' }}" style="min-width:100px">
+            {% endif %}
           </td>
           <td class="small text-muted" data-value="{{ (lead.job_type or '') | lower }}">{{ lead.job_type or '—' }}</td>
           <td class="small text-muted" data-value="{{ (lead.location or '') | lower }}">{{ lead.location or '—' }}</td>
@@ -187,6 +194,7 @@ th.sortable {
 th.sortable:hover { background-color: #e9ecef; }
 .sort-icon { font-size: .7rem; opacity: .35; margin-left: 2px; }
 .sort-icon.active { opacity: 1; }
+.name-display:hover { text-decoration: underline dotted; color: #0d6efd; cursor: pointer; }
 </style>
 {% endblock %}
 
@@ -244,12 +252,55 @@ async function deleteLead(leadId, btn) {
 }
 {% endif %}
 
+// ── Inline name editing ───────────────────────────────────────────────────────
+if (!PORTAL_MODE) {
+  document.querySelectorAll('.name-cell').forEach(cell => {
+    const leadId = cell.dataset.leadId;
+    const display = cell.querySelector('.name-display');
+    const input = cell.querySelector('.name-input');
+    if (!display || !input) return;
+
+    display.style.cursor = 'pointer';
+    display.title = 'Click to edit';
+
+    display.addEventListener('click', () => {
+      display.classList.add('d-none');
+      input.classList.remove('d-none');
+      input.focus();
+      input.select();
+    });
+
+    async function saveName() {
+      const name = input.value.trim();
+      input.classList.add('d-none');
+      display.textContent = name || '—';
+      display.classList.remove('d-none');
+      cell.dataset.value = name.toLowerCase();
+      try {
+        await fetch(`/leads/${leadId}/contact-name`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contact_name: name || null }),
+        });
+      } catch (e) {
+        showToast('Failed to save name', 'danger');
+      }
+    }
+
+    input.addEventListener('blur', saveName);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = display.textContent === '—' ? '' : display.textContent; input.blur(); }
+    });
+  });
+}
+
 // ── Table sorting ─────────────────────────────────────────────────────────────
 (function () {
   const tbody = document.getElementById('leads-tbody');
   if (!tbody) return;
 
-  let currentCol = 3;
+  let currentCol = 4;
   let currentDir = 'desc';
 
   function cellValue(row, col) {

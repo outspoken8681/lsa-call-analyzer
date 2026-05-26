@@ -500,6 +500,18 @@ async def reanalyze_lead(request: Request, lead_id: str, background_tasks: Backg
     return {"message": "Re-analyzing lead in background."}
 
 
+@app.post("/leads/{lead_id}/contact-name")
+async def update_contact_name(request: Request, lead_id: str):
+    ctx = await _admin_context(request)
+    client = ctx["current_client"]
+    if not client:
+        raise HTTPException(status_code=400, detail="No client selected.")
+    body = await request.json()
+    name = (body.get("contact_name") or "").strip() or None
+    await update_lead(client["id"], lead_id, {"contact_name": name})
+    return {"contact_name": name}
+
+
 @app.delete("/leads/{lead_id}")
 async def remove_lead(request: Request, lead_id: str):
     ctx = await _admin_context(request)

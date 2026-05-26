@@ -27,6 +27,19 @@
           <i class="bi bi-person-circle me-2 text-primary"></i>{{ lead.caller_name or 'Unknown Caller' }}
         </h5>
         <dl class="row mb-0 small">
+          <dt class="col-5 text-muted">Caller ID</dt>
+          <dd class="col-7">{{ lead.caller_name or '—' }}</dd>
+
+          <dt class="col-5 text-muted">Name</dt>
+          <dd class="col-7" id="name-dd">
+            {% if not portal_mode %}
+            <span id="name-display" style="cursor:pointer" title="Click to edit">{{ lead.contact_name or '—' }}</span>
+            <input id="name-input" type="text" class="form-control form-control-sm d-none" value="{{ lead.contact_name or '' }}" style="max-width:160px">
+            {% else %}
+            {{ lead.contact_name or '—' }}
+            {% endif %}
+          </dd>
+
           <dt class="col-5 text-muted">Phone</dt>
           <dd class="col-7">{{ lead.caller_phone or '—' }}</dd>
 
@@ -275,6 +288,12 @@
 </div>
 {% endblock %}
 
+{% block styles %}
+<style>
+#name-display:hover { color: #0d6efd; text-decoration: underline dotted; }
+</style>
+{% endblock %}
+
 {% block scripts %}
 <script>
 const LEAD_ID = "{{ lead.id }}";
@@ -314,6 +333,42 @@ function showToast(msg, type = 'primary') {
 }
 
 {% if not portal_mode %}
+// ── Inline name editing ───────────────────────────────────────────────────────
+(function () {
+  const display = document.getElementById('name-display');
+  const input = document.getElementById('name-input');
+  if (!display || !input) return;
+
+  display.addEventListener('click', () => {
+    display.classList.add('d-none');
+    input.classList.remove('d-none');
+    input.focus();
+    input.select();
+  });
+
+  async function saveName() {
+    const name = input.value.trim();
+    input.classList.add('d-none');
+    display.textContent = name || '—';
+    display.classList.remove('d-none');
+    try {
+      await fetch(`/leads/${LEAD_ID}/contact-name`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contact_name: name || null }),
+      });
+    } catch (e) {
+      showToast('Failed to save name', 'danger');
+    }
+  }
+
+  input.addEventListener('blur', saveName);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = display.textContent === '—' ? '' : display.textContent; input.blur(); }
+  });
+})();
+
 async function processLead() {
   const res = await fetch(`/leads/${LEAD_ID}/process`, { method: 'POST' });
   const data = await res.json();
