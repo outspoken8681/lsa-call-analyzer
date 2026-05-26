@@ -47,6 +47,7 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 BASE_URL = os.getenv("BASE_URL", "").rstrip("/")
+SYNC_ENABLED = os.getenv("SYNC_ENABLED", "false").lower() == "true"
 _signer = URLSafeTimedSerializer(SECRET_KEY)
 
 # Pre-hash admin password at startup
@@ -142,6 +143,7 @@ async def _admin_context(request: Request) -> dict:
         "current_client": current_client,
         "portal_mode": False,
         "base_url": base,
+        "sync_enabled": SYNC_ENABLED,
     }
 
 

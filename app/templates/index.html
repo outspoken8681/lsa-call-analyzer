@@ -5,7 +5,7 @@
 {% set lead_base = '/portal/' + portal_slug + '/leads' if portal_mode else '/leads' %}
 
 {% block nav_extra %}
-  {% if not portal_mode %}
+  {% if not portal_mode and sync_enabled %}
     {% if is_authenticated %}
       <span class="badge bg-success status-pill"><i class="bi bi-check-circle me-1"></i>Connected to Google</span>
       <button class="btn btn-sm btn-light" onclick="triggerScrape()">
