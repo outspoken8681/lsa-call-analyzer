@@ -4,7 +4,7 @@
 
 {% set lead_base = '/portal/' + portal_slug + '/leads' if portal_mode else '/leads' %}
 {% set audio_base = '/portal/' + portal_slug + '/audio' if portal_mode else '/audio' %}
-{% set back_url = lead_base if portal_mode else '/' %}
+{% set back_url = lead_base %}
 
 {% block nav_extra %}
   <a id="btn-prev" href="#" class="btn btn-sm btn-light disabled" aria-label="Previous lead">
@@ -71,8 +71,13 @@
           <dt class="col-5 text-muted">Charge Status</dt>
           <dd class="col-7">
             {% if lead.charge_status %}
-              {% if 'charged' in lead.charge_status.lower() and 'not' not in lead.charge_status.lower() %}
+              {% set cs = lead.charge_status.lower() %}
+              {% if 'charged' in cs and 'not' not in cs %}
                 <span class="text-primary fw-medium">{{ lead.charge_status }}</span>
+              {% elif 'review' in cs %}
+                <span class="text-warning fw-medium">{{ lead.charge_status }}</span>
+              {% elif 'credit' in cs or 'refund' in cs %}
+                <span class="text-danger fw-medium">{{ lead.charge_status }}</span>
               {% else %}
                 <span class="text-muted">{{ lead.charge_status }}</span>
               {% endif %}

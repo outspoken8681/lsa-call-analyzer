@@ -95,8 +95,13 @@
           </td>
           <td class="small" data-value="{{ (lead.charge_status or '') | lower }}">
             {% if lead.charge_status %}
-              {% if 'charged' in lead.charge_status.lower() and 'not' not in lead.charge_status.lower() %}
+              {% set cs = lead.charge_status.lower() %}
+              {% if 'charged' in cs and 'not' not in cs %}
                 <span class="text-primary fw-medium">{{ lead.charge_status }}</span>
+              {% elif 'review' in cs %}
+                <span class="text-warning fw-medium">{{ lead.charge_status }}</span>
+              {% elif 'credit' in cs or 'refund' in cs %}
+                <span class="text-danger fw-medium">{{ lead.charge_status }}</span>
               {% else %}
                 <span class="text-muted">{{ lead.charge_status }}</span>
               {% endif %}

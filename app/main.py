@@ -359,6 +359,13 @@ async def admin_select_client(client_id: int):
 # ── Admin: dashboard ──────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    if not _is_admin(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    return RedirectResponse("/admin/clients", status_code=302)
+
+
+@app.get("/leads", response_class=HTMLResponse)
 async def dashboard(request: Request, page: int = 1):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
