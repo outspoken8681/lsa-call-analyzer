@@ -292,13 +292,18 @@ async def get_lead_list(client: dict) -> list[dict]:
             continue
         raw_type = (cells[4] if len(cells) > 4 else "").strip().lower()
         lead_type = "message" if raw_type == "message" else "phone"
-        cell0 = cells[0] if cells else None
+        cell0 = (cells[0] or "").strip() if cells else ""
+        # For message leads cells[0] is sometimes a name, sometimes a phone number.
+        # Distinguish by presence of digits: digits → phone, letters only → name.
+        if lead_type == "message" and cell0 and not any(c.isdigit() for c in cell0):
+            caller_name, caller_phone = cell0, None
+        else:
+            caller_name, caller_phone = None, cell0 or None
         leads.append({
             "id": lead_id,
             "lead_type": lead_type,
-            # Message leads: cells[0] is the customer name; phone leads: it's the phone number
-            "caller_name": cell0 if lead_type == "message" else None,
-            "caller_phone": None if lead_type == "message" else cell0,
+            "caller_name": caller_name,
+            "caller_phone": caller_phone,
             "job_type": cells[1] if len(cells) > 1 and cells[1] != "-" else None,
             "location": cells[3] if len(cells) > 3 and cells[3] != "-" else None,
             "call_date": _normalize_call_date(cells[6]) if len(cells) > 6 else None,
@@ -388,13 +393,18 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                 continue
             raw_type = (cells[4] if len(cells) > 4 else "").strip().lower()
             lead_type = "message" if raw_type == "message" else "phone"
-            cell0 = cells[0] if cells else None
+            cell0 = (cells[0] or "").strip() if cells else ""
+            # For message leads cells[0] is sometimes a name, sometimes a phone number.
+            # Distinguish by presence of digits: digits → phone, letters only → name.
+            if lead_type == "message" and cell0 and not any(c.isdigit() for c in cell0):
+                caller_name, caller_phone = cell0, None
+            else:
+                caller_name, caller_phone = None, cell0 or None
             all_leads.append({
                 "id": lead_id,
                 "lead_type": lead_type,
-                # Message leads: cells[0] is the customer name; phone leads: it's the phone number
-                "caller_name": cell0 if lead_type == "message" else None,
-                "caller_phone": None if lead_type == "message" else cell0,
+                "caller_name": caller_name,
+                "caller_phone": caller_phone,
                 "job_type": cells[1] if len(cells) > 1 and cells[1] != "-" else None,
                 "location": cells[3] if len(cells) > 3 and cells[3] != "-" else None,
                 "call_date": _normalize_call_date(cells[6]) if len(cells) > 6 else None,
