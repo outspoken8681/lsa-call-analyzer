@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, Response
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -92,10 +94,40 @@ def _portal_slug(request: Request) -> str | None:
     return _unsign(token)
 
 
+_scheduler = AsyncIOScheduler()
+
+
+async def _scheduled_sync():
+    """Triggered automatically 3× per day — syncs all clients that have a lead list URL."""
+    if _scan_state["running"]:
+        logger.info("[scheduler] Auto-sync skipped — scan already in progress.")
+        return
+    if not SYNC_ENABLED:
+        return
+    if not await ensure_auth():
+        logger.info("[scheduler] Auto-sync skipped — not authenticated with Google.")
+        return
+    clients = await get_all_clients()
+    eligible = [c for c in clients if c.get("lead_list_url")]
+    if not eligible:
+        logger.info("[scheduler] Auto-sync skipped — no clients configured.")
+        return
+    logger.info(f"[scheduler] Auto-sync starting for {len(eligible)} client(s)...")
+    await _scan_all_clients_task(eligible)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    if SYNC_ENABLED:
+        # Run at 7 am, 12 pm, and 6 pm in the system's local time
+        _scheduler.add_job(_scheduled_sync, CronTrigger(hour="7,12,18"), id="auto_sync",
+                           misfire_grace_time=300)
+        _scheduler.start()
+        logger.info("[scheduler] Auto-sync scheduled at 7 am, 12 pm, 6 pm (local time).")
     yield
+    if _scheduler.running:
+        _scheduler.shutdown(wait=False)
     await close_db()
 
 
