@@ -103,15 +103,19 @@
       </thead>
       <tbody id="leads-tbody">
         {% for lead in leads %}
-        <tr>
+        <tr onclick="window.location='{{ lead_base }}/{{ lead.id }}'" style="cursor:pointer">
           <td data-value="{{ (lead.caller_name or lead.caller_phone or '') | lower }}" class="text-nowrap">
-            <div class="fw-medium">{{ lead.caller_name or '—' }}</div>
-            <small class="text-muted">{{ lead.caller_phone or '' }}</small>
+            {% if lead.caller_name %}
+              <div class="fw-medium">{{ lead.caller_name }}</div>
+              <small class="text-muted">{{ lead.caller_phone or '' }}</small>
+            {% else %}
+              <span class="text-muted small">{{ lead.caller_phone or '—' }}</span>
+            {% endif %}
           </td>
           <td data-value="{{ (lead.contact_name or '') | lower }}" class="text-nowrap name-cell" data-lead-id="{{ lead.id }}">
-            <span class="name-display">{{ lead.contact_name or '—' }}</span>
+            <span class="name-display small">{{ lead.contact_name or '—' }}</span>
             {% if not portal_mode %}
-            <input type="text" class="name-input form-control form-control-sm d-none" value="{{ lead.contact_name or '' }}" style="min-width:100px">
+            <input type="text" class="name-input form-control form-control-sm d-none" value="{{ lead.contact_name or '' }}" style="min-width:100px" onclick="event.stopPropagation()">
             {% endif %}
           </td>
           <td class="small text-muted" data-value="{{ (lead.job_type or '') | lower }}">{{ lead.job_type or '—' }}</td>
@@ -178,7 +182,7 @@
             {{ lead.analysis_data.service_requested if lead.analysis_data and lead.analysis_data.service_requested else '—' }}
           </td>
           <td class="font-monospace text-muted small" data-value="{{ lead.id }}">{{ lead.id }}</td>
-          <td class="text-nowrap">
+          <td class="text-nowrap" onclick="event.stopPropagation()">
             <a href="{{ lead_base }}/{{ lead.id }}" class="btn btn-sm btn-outline-secondary me-1 view-lead-btn">
               View <i class="bi bi-arrow-right"></i>
             </a>
@@ -309,7 +313,8 @@ if (!PORTAL_MODE) {
     display.style.cursor = 'pointer';
     display.title = 'Click to edit';
 
-    display.addEventListener('click', () => {
+    display.addEventListener('click', (e) => {
+      e.stopPropagation();
       display.classList.add('d-none');
       input.classList.remove('d-none');
       input.focus();

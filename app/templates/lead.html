@@ -189,12 +189,16 @@
 
         <div class="row g-3 mb-3">
           <div class="col-sm-6 text-center">
+            {% if lead.qualification_score %}
             <div class="fs-1 fw-bold
               {% if lead.qualification_score >= 4 %}text-success
               {% elif lead.qualification_score == 3 %}text-warning
               {% else %}text-danger{% endif %}">
               {{ lead.qualification_score }}<span class="fs-5 text-muted">/5</span>
             </div>
+            {% else %}
+            <div class="fs-1 fw-bold text-muted">—</div>
+            {% endif %}
             <div class="small text-muted">Lead Score</div>
           </div>
           <div class="col-sm-6 text-center">

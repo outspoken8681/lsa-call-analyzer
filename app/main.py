@@ -121,10 +121,11 @@ async def lifespan(app: FastAPI):
     await init_db()
     if SYNC_ENABLED:
         # Run at 7 am, 12 pm, and 6 pm in the system's local time
-        _scheduler.add_job(_scheduled_sync, CronTrigger(hour="7,12,18"), id="auto_sync",
-                           misfire_grace_time=300)
+        _scheduler.add_job(_scheduled_sync, CronTrigger(hour=10, minute=0),  id="auto_sync_1", misfire_grace_time=300)
+        _scheduler.add_job(_scheduled_sync, CronTrigger(hour=13, minute=0),  id="auto_sync_2", misfire_grace_time=300)
+        _scheduler.add_job(_scheduled_sync, CronTrigger(hour=16, minute=30), id="auto_sync_3", misfire_grace_time=300)
         _scheduler.start()
-        logger.info("[scheduler] Auto-sync scheduled at 7 am, 12 pm, 6 pm (local time).")
+        logger.info("[scheduler] Auto-sync scheduled at 10 am, 1 pm, 4:30 pm (local time).")
     yield
     if _scheduler.running:
         _scheduler.shutdown(wait=False)
