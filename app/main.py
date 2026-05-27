@@ -12,6 +12,7 @@ load_dotenv()
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
@@ -98,7 +99,8 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
-app = FastAPI(title="LSA Call Analyzer", lifespan=lifespan)
+app = FastAPI(title="Triple Take", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
