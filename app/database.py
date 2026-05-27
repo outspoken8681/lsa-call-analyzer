@@ -91,6 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_client_id ON leads (client_id);
 CREATE INDEX IF NOT EXISTS idx_leads_call_date ON leads (client_id, call_date DESC NULLS LAST);
 
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_type TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_name TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_password_plain TEXT;
 """
 
@@ -197,24 +198,72 @@ async def get_lead(client_id: int, lead_id: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
-async def get_all_leads(client_id: int, limit: int = 100, offset: int = 0) -> list[dict]:
+def _build_lead_where(client_id: int,
+                       filter_answered: list[str] | None,
+                       filter_charged: list[str] | None) -> tuple[str, list]:
+    """Build a WHERE clause + params list for lead queries with optional filters."""
+    conditions = ["client_id = $1"]
+    params: list = [client_id]
+
+    def _p(val):
+        params.append(val)
+        return f"${len(params)}"
+
+    if filter_answered:
+        parts = []
+        for v in filter_answered:
+            if v == "yes":
+                parts.append("(is_answered = 1 AND (lead_type IS NULL OR lead_type != 'message'))")
+            elif v == "missed":
+                parts.append("(is_answered = 0 AND (lead_type IS NULL OR lead_type != 'message'))")
+            elif v == "message":
+                parts.append("lead_type = 'message'")
+        if parts:
+            conditions.append(f"({' OR '.join(parts)})")
+
+    if filter_charged:
+        parts = []
+        for v in filter_charged:
+            if v == "charged":
+                parts.append(f"(charge_status ILIKE {_p('%charged%')} AND charge_status NOT ILIKE {_p('%not%')})")
+            elif v == "in-review":
+                parts.append(f"charge_status ILIKE {_p('%review%')}")
+            elif v == "not-charged":
+                parts.append(f"charge_status ILIKE {_p('%not%')}")
+            elif v == "credited":
+                parts.append(f"(charge_status ILIKE {_p('%credit%')} OR charge_status ILIKE {_p('%refund%')})")
+        if parts:
+            conditions.append(f"({' OR '.join(parts)})")
+
+    return " AND ".join(conditions), params
+
+
+async def get_all_leads(client_id: int, limit: int = 100, offset: int = 0,
+                        filter_answered: list[str] | None = None,
+                        filter_charged: list[str] | None = None) -> list[dict]:
+    where, params = _build_lead_where(client_id, filter_answered, filter_charged)
+    lim_p = f"${len(params)+1}"
+    off_p = f"${len(params)+2}"
     async with _get_pool().acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT * FROM leads
-            WHERE client_id = $1
+            WHERE {where}
             ORDER BY call_date DESC NULLS LAST, created_at DESC
-            LIMIT $2 OFFSET $3
+            LIMIT {lim_p} OFFSET {off_p}
             """,
-            client_id, limit, offset,
+            *params, limit, offset,
         )
         return [dict(r) for r in rows]
 
 
-async def get_leads_count(client_id: int) -> int:
+async def get_leads_count(client_id: int,
+                          filter_answered: list[str] | None = None,
+                          filter_charged: list[str] | None = None) -> int:
+    where, params = _build_lead_where(client_id, filter_answered, filter_charged)
     async with _get_pool().acquire() as conn:
         val = await conn.fetchval(
-            "SELECT COUNT(*) FROM leads WHERE client_id = $1", client_id
+            f"SELECT COUNT(*) FROM leads WHERE {where}", *params
         )
         return val or 0
 

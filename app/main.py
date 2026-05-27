@@ -466,10 +466,20 @@ async def dashboard(request: Request, page: int = 1):
         return RedirectResponse("/admin/clients", status_code=302)
 
     client_id = current_client["id"]
+
+    # Parse multi-value filter params from query string
+    filter_answered = request.query_params.getlist("answered") or None
+    filter_charged = request.query_params.getlist("charged") or None
+
     page_size = 25
     offset = (page - 1) * page_size
-    leads = _enrich_leads(await get_all_leads(client_id, limit=page_size, offset=offset))
-    total = await get_leads_count(client_id)
+    leads = _enrich_leads(await get_all_leads(
+        client_id, limit=page_size, offset=offset,
+        filter_answered=filter_answered, filter_charged=filter_charged,
+    ))
+    total = await get_leads_count(client_id,
+                                  filter_answered=filter_answered,
+                                  filter_charged=filter_charged)
     is_authenticated = await ensure_auth()
 
     return templates.TemplateResponse(request, "index.html", {
@@ -480,6 +490,8 @@ async def dashboard(request: Request, page: int = 1):
         "page_size": page_size,
         "total_pages": max(1, (total + page_size - 1) // page_size),
         "is_authenticated": is_authenticated,
+        "filter_answered": filter_answered or [],
+        "filter_charged": filter_charged or [],
     })
 
 
@@ -717,10 +729,18 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
     if not client:
         raise HTTPException(status_code=404, detail="Portal not found")
 
+    filter_answered = request.query_params.getlist("answered") or None
+    filter_charged = request.query_params.getlist("charged") or None
+
     page_size = 25
     offset = (page - 1) * page_size
-    leads = _enrich_leads(await get_all_leads(client["id"], limit=page_size, offset=offset))
-    total = await get_leads_count(client["id"])
+    leads = _enrich_leads(await get_all_leads(
+        client["id"], limit=page_size, offset=offset,
+        filter_answered=filter_answered, filter_charged=filter_charged,
+    ))
+    total = await get_leads_count(client["id"],
+                                  filter_answered=filter_answered,
+                                  filter_charged=filter_charged)
 
     return templates.TemplateResponse(request, "index.html", {
         "leads": leads,
@@ -733,6 +753,8 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
         "portal_slug": slug,
         "current_client": client,
         "all_clients": [],
+        "filter_answered": filter_answered or [],
+        "filter_charged": filter_charged or [],
     })
 
 
