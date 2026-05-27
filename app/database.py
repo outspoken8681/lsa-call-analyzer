@@ -93,6 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_call_date ON leads (client_id, call_date DE
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_type TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_name TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_password_plain TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_synced_at TEXT;
 """
 
 

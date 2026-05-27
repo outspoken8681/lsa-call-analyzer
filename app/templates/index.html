@@ -27,7 +27,12 @@
 <div class="d-flex align-items-center justify-content-between mb-4">
   <div>
     <h4 class="mb-0 fw-semibold">{{ current_client.name }} LSA Leads</h4>
-    <small class="text-muted">{{ total }} total lead{{ 's' if total != 1 else '' }}</small>
+    <small class="text-muted">
+      {{ total }} total lead{{ 's' if total != 1 else '' }}
+      {% if current_client.last_synced_at %}
+        &nbsp;·&nbsp;<i class="bi bi-arrow-clockwise"></i> Last synced {{ current_client.last_synced_at | fmt_call_date }}
+      {% endif %}
+    </small>
   </div>
 </div>
 

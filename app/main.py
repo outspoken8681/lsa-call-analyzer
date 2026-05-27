@@ -309,6 +309,7 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
             await _transcribe_and_analyze(client_id, lead["id"])
 
     logger.info(f"[{client['slug']}] Full scrape complete.")
+    await update_client(client["id"], {"last_synced_at": _datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")})
 
 
 async def _transcribe_and_analyze(client_id: int, lead_id: str):
