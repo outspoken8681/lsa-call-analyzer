@@ -74,7 +74,12 @@
             <h6 class="fw-semibold mb-0">{{ client.name }}</h6>
             <small class="text-muted font-monospace">{{ client.slug }}</small>
             {% if client.last_synced_at %}
-            <br><small class="text-muted"><i class="bi bi-arrow-clockwise me-1"></i>Last synced: {{ client.last_synced_at | fmt_call_date }}</small>
+            <br><small class="text-muted">
+              <i class="bi bi-arrow-clockwise me-1"></i>Last synced: {{ client.last_synced_at | fmt_call_date }}
+              {% if client.last_sync_new_leads %}
+                &nbsp;<span class="badge bg-success">+{{ client.last_sync_new_leads }} new</span>
+              {% endif %}
+            </small>
             {% else %}
             <br><small class="text-muted">Never synced</small>
             {% endif %}

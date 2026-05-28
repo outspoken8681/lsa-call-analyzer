@@ -36,6 +36,9 @@
       {{ total }} total lead{{ 's' if total != 1 else '' }}
       {% if current_client.last_synced_at %}
         &nbsp;·&nbsp;<i class="bi bi-arrow-clockwise"></i> Last synced {{ current_client.last_synced_at | fmt_call_date }}
+        {% if current_client.last_sync_new_leads %}
+          &nbsp;<span class="badge bg-success">+{{ current_client.last_sync_new_leads }} new</span>
+        {% endif %}
       {% endif %}
     </small>
   </div>

@@ -94,6 +94,7 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_type TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_name TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_password_plain TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_synced_at TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_sync_new_leads INTEGER;
 """
 
 

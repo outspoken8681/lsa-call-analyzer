@@ -264,6 +264,7 @@ async def _process_lead(client_id: int, lead_id: str):
 async def _scrape_and_process_all(client: dict, max_leads: int = 50):
     """Scrape all leads for a client then transcribe + analyze."""
     client_id = client["id"]
+    count_before = await get_leads_count(client_id)
 
     # ── Step 1: Quick table read — surface all leads as Pending immediately ──
     logger.info(f"[{client['slug']}] Reading lead list for quick preview...")
@@ -311,8 +312,13 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
         if lead.get("scrape_status") == "completed" and (lead.get("audio_path") or is_message):
             await _transcribe_and_analyze(client_id, lead["id"])
 
-    logger.info(f"[{client['slug']}] Full scrape complete.")
-    await update_client(client["id"], {"last_synced_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S")})
+    count_after = await get_leads_count(client_id)
+    new_leads = max(0, count_after - count_before)
+    logger.info(f"[{client['slug']}] Full scrape complete. {new_leads} new lead(s).")
+    await update_client(client["id"], {
+        "last_synced_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S"),
+        "last_sync_new_leads": new_leads,
+    })
 
 
 async def _transcribe_and_analyze(client_id: int, lead_id: str):
