@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime as _datetime
+from datetime import datetime as _datetime, timedelta
 from zoneinfo import ZoneInfo
 
 _EASTERN = ZoneInfo("America/New_York")
@@ -366,6 +366,57 @@ def _enrich_leads(leads: list[dict]) -> list[dict]:
     return leads
 
 
+def _parse_call_date(date_str: str | None):
+    """Parse a stored call_date string into a Python date object, or None."""
+    if not date_str:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",
+                "%m/%d/%y %I:%M %p", "%B %d, %Y %I:%M %p"):
+        try:
+            return _datetime.strptime(date_str.replace(" at ", " "), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+async def _get_week_chart_data(client_id: int) -> tuple[str, str]:
+    """Return (chart_leads_json, week_days_json) for the current Eastern Sun–Sat week."""
+    today_et = _datetime.now(_EASTERN).date()
+    days_since_sunday = (today_et.weekday() + 1) % 7
+    week_start = today_et - timedelta(days=days_since_sunday)
+    week_end   = week_start + timedelta(days=6)
+
+    all_recent = _enrich_leads(await get_all_leads(client_id, limit=200, offset=0))
+    chart_leads = []
+    for lead in all_recent:
+        d = _parse_call_date(lead.get("call_date"))
+        if not d or not (week_start <= d <= week_end):
+            continue
+        ad = lead.get("analysis_data") or {}
+        chart_leads.append({
+            "id":           str(lead["id"]),
+            "date":         d.isoformat(),
+            "lead_type":    lead.get("lead_type") or "phone",
+            "is_answered":  lead.get("is_answered"),
+            "caller_name":  lead.get("caller_name") or "",
+            "contact_name": lead.get("contact_name") or "",
+            "service":      ad.get("service_requested") or "",
+        })
+
+    day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    week_days = []
+    for i in range(7):
+        d = week_start + timedelta(days=i)
+        week_days.append({
+            "date":     d.isoformat(),
+            "day":      day_names[i],
+            "md":       f"{d.month}/{d.day}",
+            "is_today": d == today_et,
+        })
+
+    return json.dumps(chart_leads), json.dumps(week_days)
+
+
 # ── Admin auth routes ─────────────────────────────────────────────────────────
 
 @app.get("/admin/login", response_class=HTMLResponse)
@@ -533,6 +584,7 @@ async def dashboard(request: Request, page: int = 1):
                                   filter_answered=filter_answered,
                                   filter_charged=filter_charged)
     is_authenticated = await ensure_auth()
+    chart_leads_json, chart_days_json = await _get_week_chart_data(client_id)
 
     return templates.TemplateResponse(request, "index.html", {
         **ctx,
@@ -544,6 +596,8 @@ async def dashboard(request: Request, page: int = 1):
         "is_authenticated": is_authenticated,
         "filter_answered": filter_answered or [],
         "filter_charged": filter_charged or [],
+        "weekly_chart_leads_json": chart_leads_json,
+        "weekly_chart_days_json":  chart_days_json,
     })
 
 
@@ -794,6 +848,8 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
                                   filter_answered=filter_answered,
                                   filter_charged=filter_charged)
 
+    chart_leads_json, chart_days_json = await _get_week_chart_data(client["id"])
+
     return templates.TemplateResponse(request, "index.html", {
         "leads": leads,
         "total": total,
@@ -807,6 +863,8 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
         "all_clients": [],
         "filter_answered": filter_answered or [],
         "filter_charged": filter_charged or [],
+        "weekly_chart_leads_json": chart_leads_json,
+        "weekly_chart_days_json":  chart_days_json,
     })
 
 

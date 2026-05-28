@@ -44,6 +44,38 @@
   </div>
 </div>
 
+{# ── Weekly lead chart ────────────────────────────────────────────────────────── #}
+{% if total > 0 %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2 px-3">
+    <div class="d-flex align-items-center justify-content-between">
+      <span class="small fw-semibold" style="color:var(--tt-slate)">
+        <i class="bi bi-bar-chart-fill me-1"></i>This Week
+      </span>
+      <button class="btn btn-sm btn-link text-muted p-0 text-decoration-none"
+              data-bs-toggle="collapse" data-bs-target="#week-chart-collapse"
+              aria-expanded="true">
+        <i class="bi bi-chevron-up" id="chart-chevron"></i>
+      </button>
+    </div>
+    <div class="collapse show" id="week-chart-collapse">
+      <div id="week-chart-inner" class="pt-2"></div>
+      <div class="d-flex gap-3 justify-content-center mt-2 pb-1">
+        <span class="d-flex align-items-center gap-1" style="font-size:11px;color:#64748b;">
+          <span style="width:10px;height:10px;background:#15803d;border-radius:2px;display:inline-block;"></span> Answered
+        </span>
+        <span class="d-flex align-items-center gap-1" style="font-size:11px;color:#64748b;">
+          <span style="width:10px;height:10px;background:#ef4444;border-radius:2px;display:inline-block;"></span> Missed
+        </span>
+        <span class="d-flex align-items-center gap-1" style="font-size:11px;color:#64748b;">
+          <span style="width:10px;height:10px;background:#0891b2;border-radius:2px;display:inline-block;"></span> Message
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if not leads %}
 <div class="card border-0 shadow-sm">
   <div class="card-body text-center py-5 text-muted">
@@ -255,7 +287,105 @@ th.sortable:hover { background-color: #e9ecef; }
 
 {% block scripts %}
 <script>
-const PORTAL_MODE = {{ 'true' if portal_mode else 'false' }};
+const PORTAL_MODE   = {{ 'true' if portal_mode else 'false' }};
+const WEEK_LEADS    = {{ weekly_chart_leads_json | safe }};
+const WEEK_DAYS     = {{ weekly_chart_days_json  | safe }};
+const LEAD_BASE_URL = "{{ lead_base }}";
+
+// ── Weekly bar chart ──────────────────────────────────────────────────────────
+(function buildWeekChart() {
+  const container = document.getElementById('week-chart-inner');
+  if (!container || !WEEK_DAYS.length) return;
+
+  const CHART_H  = 180;
+  const MIN_ROWS = 10;
+  const STEP     = 5;
+  const GAP      = 1;
+  const COL_PAD  = 2;
+
+  const COLORS = {
+    answered: '#15803d',
+    missed:   '#ef4444',
+    message:  '#0891b2',
+    unknown:  '#94a3b8',
+  };
+
+  function blockColor(lead) {
+    if (lead.lead_type === 'message') return COLORS.message;
+    if (lead.is_answered === 1)       return COLORS.answered;
+    if (lead.is_answered === 0)       return COLORS.missed;
+    return COLORS.unknown;
+  }
+
+  const byDay = {};
+  WEEK_LEADS.forEach(l => {
+    if (!byDay[l.date]) byDay[l.date] = [];
+    byDay[l.date].push(l);
+  });
+
+  const maxCount = Math.max(0, ...WEEK_DAYS.map(d => (byDay[d.date] || []).length));
+  const numRows  = Math.max(MIN_ROWS, Math.ceil(Math.max(maxCount, 1) / STEP) * STEP);
+  const blockH   = Math.floor(CHART_H / numRows);
+  const actualH  = blockH * numRows;
+
+  let html = '<div style="display:flex;align-items:flex-start;">';
+
+  // Y axis
+  html += `<div style="width:24px;height:${actualH}px;position:relative;flex-shrink:0;margin-right:4px;">`;
+  for (let tick = numRows; tick >= 0; tick -= STEP) {
+    const topPx = ((numRows - tick) / numRows) * actualH;
+    html += `<span style="position:absolute;top:${topPx}px;right:2px;font-size:9px;line-height:1;color:#94a3b8;transform:translateY(-50%);">${tick}</span>`;
+  }
+  html += '</div>';
+
+  // Day columns
+  html += '<div style="flex:1;display:flex;gap:4px;">';
+  WEEK_DAYS.forEach(day => {
+    const leads   = byDay[day.date] || [];
+    const isToday = day.is_today;
+
+    html += '<div style="flex:1;display:flex;flex-direction:column;">';
+
+    // Bar area — column-reverse so blocks stack from the bottom up
+    html += `<div style="height:${actualH}px;display:flex;flex-direction:column-reverse;gap:${GAP}px;padding:0 ${COL_PAD}px;${isToday ? 'background:rgba(30,58,95,.05);border-radius:4px 4px 0 0;' : ''}">`;
+    leads.forEach(lead => {
+      const color   = blockColor(lead);
+      const name    = lead.contact_name || lead.caller_name || 'Unknown';
+      const tip     = lead.service ? `${name} · ${lead.service}` : name;
+      const safeTip = tip.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+      html += `<a href="${LEAD_BASE_URL}/${lead.id}"
+        style="display:block;height:${Math.max(4, blockH - GAP)}px;background:${color};border-radius:2px;flex-shrink:0;opacity:.85;transition:opacity .15s;"
+        data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="${safeTip}"
+        onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.85"
+        onclick="event.stopPropagation()"></a>`;
+    });
+    html += '</div>';
+
+    // Day label
+    html += `<div style="text-align:center;padding-top:4px;border-top:1px solid #e2e8f0;">
+      <div style="font-size:11px;font-weight:${isToday ? 600 : 400};color:${isToday ? 'var(--tt-slate)' : '#64748b'};">${day.day}</div>
+      <div style="font-size:10px;color:#94a3b8;">${day.md}</div>
+    </div>`;
+
+    html += '</div>';
+  });
+
+  html += '</div></div>';
+  container.innerHTML = html;
+
+  // Init Bootstrap tooltips
+  container.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+    bootstrap.Tooltip.getOrCreateInstance(el, { trigger: 'hover' });
+  });
+})();
+
+// Chevron toggles with collapse
+document.getElementById('week-chart-collapse')?.addEventListener('hide.bs.collapse', () => {
+  document.getElementById('chart-chevron')?.classList.replace('bi-chevron-up', 'bi-chevron-down');
+});
+document.getElementById('week-chart-collapse')?.addEventListener('show.bs.collapse', () => {
+  document.getElementById('chart-chevron')?.classList.replace('bi-chevron-down', 'bi-chevron-up');
+});
 
 function showToast(msg, type = 'primary') {
   const el = document.getElementById('toast');
