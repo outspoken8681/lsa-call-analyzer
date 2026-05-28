@@ -380,17 +380,18 @@ def _parse_call_date(date_str: str | None):
 
 
 async def _get_week_chart_data(client_id: int) -> tuple[str, str]:
-    """Return (chart_leads_json, week_days_json) for the current Eastern Sun–Sat week."""
+    """Return (chart_leads_json, weeks_json) covering the past 6 Sun–Sat weeks (Eastern)."""
     today_et = _datetime.now(_EASTERN).date()
     days_since_sunday = (today_et.weekday() + 1) % 7
-    week_start = today_et - timedelta(days=days_since_sunday)
-    week_end   = week_start + timedelta(days=6)
+    week_start  = today_et - timedelta(days=days_since_sunday)   # Sunday of current week
+    range_start = week_start - timedelta(weeks=5)                 # 6 weeks total
+    range_end   = week_start + timedelta(days=6)
 
-    all_recent = _enrich_leads(await get_all_leads(client_id, limit=200, offset=0))
+    all_recent = _enrich_leads(await get_all_leads(client_id, limit=500, offset=0))
     chart_leads = []
     for lead in all_recent:
         d = _parse_call_date(lead.get("call_date"))
-        if not d or not (week_start <= d <= week_end):
+        if not d or not (range_start <= d <= range_end):
             continue
         ad = lead.get("analysis_data") or {}
         chart_leads.append({
@@ -404,17 +405,26 @@ async def _get_week_chart_data(client_id: int) -> tuple[str, str]:
         })
 
     day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    week_days = []
-    for i in range(7):
-        d = week_start + timedelta(days=i)
-        week_days.append({
-            "date":     d.isoformat(),
-            "day":      day_names[i],
-            "md":       f"{d.month}/{d.day}",
-            "is_today": d == today_et,
+    all_weeks = []
+    for w in range(6):   # w=0 oldest (5 weeks ago), w=5 current week
+        ws = week_start - timedelta(weeks=5 - w)
+        we = ws + timedelta(days=6)
+        days = []
+        for i in range(7):
+            d = ws + timedelta(days=i)
+            days.append({
+                "date":     d.isoformat(),
+                "day":      day_names[i],
+                "md":       f"{d.month}/{d.day}",
+                "is_today": d == today_et,
+            })
+        all_weeks.append({
+            "week_start": ws.isoformat(),
+            "week_end":   we.isoformat(),
+            "days":       days,
         })
 
-    return json.dumps(chart_leads), json.dumps(week_days)
+    return json.dumps(chart_leads), json.dumps(all_weeks)
 
 
 # ── Admin auth routes ─────────────────────────────────────────────────────────
@@ -597,7 +607,7 @@ async def dashboard(request: Request, page: int = 1):
         "filter_answered": filter_answered or [],
         "filter_charged": filter_charged or [],
         "weekly_chart_leads_json": chart_leads_json,
-        "weekly_chart_days_json":  chart_days_json,
+        "weekly_chart_weeks_json": chart_days_json,
     })
 
 
@@ -864,7 +874,7 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
         "filter_answered": filter_answered or [],
         "filter_charged": filter_charged or [],
         "weekly_chart_leads_json": chart_leads_json,
-        "weekly_chart_days_json":  chart_days_json,
+        "weekly_chart_weeks_json": chart_days_json,
     })
 
 

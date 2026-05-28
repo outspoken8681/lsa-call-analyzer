@@ -48,16 +48,36 @@
 {% if total > 0 %}
 <div class="card border-0 shadow-sm mb-3">
   <div class="card-body py-2 px-3">
-    <div class="d-flex align-items-center justify-content-between">
-      <span class="small fw-semibold" style="color:var(--tt-slate)">
-        <i class="bi bi-bar-chart-fill me-1"></i>This Week
-      </span>
-      <button class="btn btn-sm btn-link text-muted p-0 text-decoration-none"
-              data-bs-toggle="collapse" data-bs-target="#week-chart-collapse"
-              aria-expanded="true">
-        <i class="bi bi-chevron-up" id="chart-chevron"></i>
-      </button>
+
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <!-- Left: prev/next + range label -->
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-bar-chart-fill small" style="color:var(--tt-slate)"></i>
+        <button id="chart-prev" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Previous">
+          <i class="bi bi-chevron-left" style="font-size:.75rem;"></i>
+        </button>
+        <span id="chart-range-label" class="small text-muted" style="min-width:140px;text-align:center;"></span>
+        <button id="chart-next" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Next">
+          <i class="bi bi-chevron-right" style="font-size:.75rem;"></i>
+        </button>
+      </div>
+      <!-- Right: week-count + collapse -->
+      <div class="d-flex align-items-center gap-1">
+        <span class="small text-muted me-1">Show:</span>
+        <button class="btn btn-sm btn-outline-secondary chart-wc-btn active py-0 px-2" data-weeks="1" style="font-size:11px;">1W</button>
+        <button class="btn btn-sm btn-outline-secondary chart-wc-btn py-0 px-2" data-weeks="2" style="font-size:11px;">2W</button>
+        <button class="btn btn-sm btn-outline-secondary chart-wc-btn py-0 px-2" data-weeks="4" style="font-size:11px;">4W</button>
+        <button class="btn btn-sm btn-outline-secondary chart-wc-btn py-0 px-2" data-weeks="6" style="font-size:11px;">6W</button>
+        <div class="ms-2 border-start ps-2">
+          <button class="btn btn-sm btn-link text-muted p-0 text-decoration-none"
+                  data-bs-toggle="collapse" data-bs-target="#week-chart-collapse"
+                  aria-expanded="true">
+            <i class="bi bi-chevron-up" id="chart-chevron"></i>
+          </button>
+        </div>
+      </div>
     </div>
+
     <div class="collapse show" id="week-chart-collapse">
       <div id="week-chart-inner" class="pt-2"></div>
       <div class="d-flex gap-3 justify-content-center mt-2 pb-1">
@@ -72,6 +92,7 @@
         </span>
       </div>
     </div>
+
   </div>
 </div>
 {% endif %}
@@ -289,44 +310,57 @@ th.sortable:hover { background-color: #e9ecef; }
 <script>
 const PORTAL_MODE   = {{ 'true' if portal_mode else 'false' }};
 const WEEK_LEADS    = {{ weekly_chart_leads_json | safe }};
-const WEEK_DAYS     = {{ weekly_chart_days_json  | safe }};
+const ALL_WEEKS     = {{ weekly_chart_weeks_json | safe }};
 const LEAD_BASE_URL = "{{ lead_base }}";
 
 // ── Weekly bar chart ──────────────────────────────────────────────────────────
-(function buildWeekChart() {
+const CHART_COLORS = {
+  answered: '#15803d',
+  missed:   '#ef4444',
+  message:  '#0891b2',
+  unknown:  '#94a3b8',
+};
+
+function chartBlockColor(lead) {
+  if (lead.lead_type === 'message') return CHART_COLORS.message;
+  if (lead.is_answered === 1)       return CHART_COLORS.answered;
+  if (lead.is_answered === 0)       return CHART_COLORS.missed;
+  return CHART_COLORS.unknown;
+}
+
+// Pre-group all leads by date
+const LEADS_BY_DATE = {};
+WEEK_LEADS.forEach(l => {
+  if (!LEADS_BY_DATE[l.date]) LEADS_BY_DATE[l.date] = [];
+  LEADS_BY_DATE[l.date].push(l);
+});
+
+// State
+let chartEndIdx   = ALL_WEEKS.length - 1;  // rightmost visible week (default: current)
+let chartWkCount  = 1;                      // number of weeks visible
+
+function renderWeekChart() {
   const container = document.getElementById('week-chart-inner');
-  if (!container || !WEEK_DAYS.length) return;
+  if (!container || !ALL_WEEKS.length) return;
 
   const CHART_H  = 180;
   const MIN_ROWS = 10;
   const STEP     = 5;
   const GAP      = 1;
-  const COL_PAD  = 2;
 
-  const COLORS = {
-    answered: '#15803d',
-    missed:   '#ef4444',
-    message:  '#0891b2',
-    unknown:  '#94a3b8',
-  };
+  const startIdx     = Math.max(0, chartEndIdx - chartWkCount + 1);
+  const visibleWeeks = ALL_WEEKS.slice(startIdx, chartEndIdx + 1);
+  const visibleDays  = visibleWeeks.flatMap(w => w.days);
 
-  function blockColor(lead) {
-    if (lead.lead_type === 'message') return COLORS.message;
-    if (lead.is_answered === 1)       return COLORS.answered;
-    if (lead.is_answered === 0)       return COLORS.missed;
-    return COLORS.unknown;
-  }
-
-  const byDay = {};
-  WEEK_LEADS.forEach(l => {
-    if (!byDay[l.date]) byDay[l.date] = [];
-    byDay[l.date].push(l);
-  });
-
-  const maxCount = Math.max(0, ...WEEK_DAYS.map(d => (byDay[d.date] || []).length));
+  const maxCount = Math.max(0, ...visibleDays.map(d => (LEADS_BY_DATE[d.date] || []).length));
   const numRows  = Math.max(MIN_ROWS, Math.ceil(Math.max(maxCount, 1) / STEP) * STEP);
   const blockH   = Math.floor(CHART_H / numRows);
   const actualH  = blockH * numRows;
+  const colPad   = chartWkCount >= 4 ? 1 : 2;
+
+  // Labels: full (day+date) for 1W, date-only for 2W, Sundays+today only for 4W/6W
+  const showDayName  = chartWkCount === 1;
+  const sparseLabels = chartWkCount >= 4;
 
   let html = '<div style="display:flex;align-items:flex-start;">';
 
@@ -338,54 +372,105 @@ const LEAD_BASE_URL = "{{ lead_base }}";
   }
   html += '</div>';
 
-  // Day columns
-  html += '<div style="flex:1;display:flex;gap:4px;">';
-  WEEK_DAYS.forEach(day => {
-    const leads   = byDay[day.date] || [];
-    const isToday = day.is_today;
+  // Columns
+  html += '<div style="flex:1;display:flex;gap:2px;">';
+  visibleWeeks.forEach((week, wi) => {
+    // Week separator
+    if (wi > 0) {
+      html += `<div style="width:1px;background:#e2e8f0;height:${actualH + 28}px;flex-shrink:0;align-self:flex-start;"></div>`;
+    }
+    week.days.forEach(day => {
+      const leads   = LEADS_BY_DATE[day.date] || [];
+      const isToday = day.is_today;
+      const isSun   = day.day === 'Sun';
+      const showLbl = !sparseLabels || isSun || isToday;
 
-    html += '<div style="flex:1;display:flex;flex-direction:column;">';
+      html += '<div style="flex:1;display:flex;flex-direction:column;min-width:0;">';
 
-    // Bar area — column-reverse so blocks stack from the bottom up
-    html += `<div style="height:${actualH}px;display:flex;flex-direction:column-reverse;gap:${GAP}px;padding:0 ${COL_PAD}px;${isToday ? 'background:rgba(30,58,95,.05);border-radius:4px 4px 0 0;' : ''}">`;
-    leads.forEach(lead => {
-      const color   = blockColor(lead);
-      const name    = lead.contact_name || lead.caller_name || 'Unknown';
-      const tip     = lead.service ? `${name} · ${lead.service}` : name;
-      const safeTip = tip.replace(/"/g, '&quot;').replace(/</g, '&lt;');
-      html += `<a href="${LEAD_BASE_URL}/${lead.id}"
-        style="display:block;height:${Math.max(4, blockH - GAP)}px;background:${color};border-radius:2px;flex-shrink:0;opacity:.85;transition:opacity .15s;"
-        data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="${safeTip}"
-        onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.85"
-        onclick="event.stopPropagation()"></a>`;
+      // Bar area — column-reverse stacks blocks from bottom up
+      html += `<div style="height:${actualH}px;display:flex;flex-direction:column-reverse;gap:${GAP}px;padding:0 ${colPad}px;${isToday ? 'background:rgba(30,58,95,.05);border-radius:4px 4px 0 0;' : ''}">`;
+      leads.forEach(lead => {
+        const color   = chartBlockColor(lead);
+        const name    = lead.contact_name || lead.caller_name || 'Unknown';
+        const tip     = lead.service ? `${name} · ${lead.service}` : name;
+        const safeTip = tip.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        html += `<a href="${LEAD_BASE_URL}/${lead.id}"
+          style="display:block;height:${Math.max(4, blockH - GAP)}px;background:${color};border-radius:2px;flex-shrink:0;opacity:.85;transition:opacity .15s;"
+          data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="${safeTip}"
+          onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.85"
+          onclick="event.stopPropagation()"></a>`;
+      });
+      html += '</div>';
+
+      // Day label
+      html += `<div style="text-align:center;padding-top:3px;border-top:1px solid #e2e8f0;overflow:hidden;">`;
+      if (showLbl) {
+        if (showDayName) {
+          html += `<div style="font-size:11px;font-weight:${isToday?600:400};color:${isToday?'var(--tt-slate)':'#64748b'};">${day.day}</div>`;
+        }
+        html += `<div style="font-size:${showDayName?10:11}px;color:${isToday?'var(--tt-slate)':'#94a3b8'};font-weight:${isToday?600:400};white-space:nowrap;">${day.md}</div>`;
+      }
+      html += '</div>';
+
+      html += '</div>';
     });
-    html += '</div>';
-
-    // Day label
-    html += `<div style="text-align:center;padding-top:4px;border-top:1px solid #e2e8f0;">
-      <div style="font-size:11px;font-weight:${isToday ? 600 : 400};color:${isToday ? 'var(--tt-slate)' : '#64748b'};">${day.day}</div>
-      <div style="font-size:10px;color:#94a3b8;">${day.md}</div>
-    </div>`;
-
-    html += '</div>';
   });
 
   html += '</div></div>';
   container.innerHTML = html;
 
+  // Update range label
+  const rangeEl = document.getElementById('chart-range-label');
+  if (rangeEl) {
+    const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', {month:'short', day:'numeric'});
+    const label = chartWkCount === 1
+      ? `${fmt(visibleWeeks[0].week_start)} – ${fmt(visibleWeeks[0].week_end)}`
+      : `${fmt(visibleWeeks[0].week_start)} – ${fmt(visibleWeeks[visibleWeeks.length-1].week_end)}`;
+    rangeEl.textContent = label;
+  }
+
+  // Update prev/next button states
+  const prevBtn = document.getElementById('chart-prev');
+  const nextBtn = document.getElementById('chart-next');
+  if (prevBtn) prevBtn.disabled = startIdx <= 0;
+  if (nextBtn) nextBtn.disabled = chartEndIdx >= ALL_WEEKS.length - 1;
+
   // Init Bootstrap tooltips
   container.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
     bootstrap.Tooltip.getOrCreateInstance(el, { trigger: 'hover' });
   });
-})();
+}
 
-// Chevron toggles with collapse
+// Navigation
+document.getElementById('chart-prev')?.addEventListener('click', () => {
+  if (chartEndIdx - chartWkCount + 1 > 0) { chartEndIdx--; renderWeekChart(); }
+});
+document.getElementById('chart-next')?.addEventListener('click', () => {
+  if (chartEndIdx < ALL_WEEKS.length - 1) { chartEndIdx++; renderWeekChart(); }
+});
+
+// Week-count buttons
+document.querySelectorAll('.chart-wc-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    chartWkCount = parseInt(btn.dataset.weeks);
+    // Clamp end index so start never goes negative
+    chartEndIdx = Math.max(chartEndIdx, chartWkCount - 1);
+    chartEndIdx = Math.min(chartEndIdx, ALL_WEEKS.length - 1);
+    document.querySelectorAll('.chart-wc-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderWeekChart();
+  });
+});
+
+// Collapse chevron sync
 document.getElementById('week-chart-collapse')?.addEventListener('hide.bs.collapse', () => {
   document.getElementById('chart-chevron')?.classList.replace('bi-chevron-up', 'bi-chevron-down');
 });
 document.getElementById('week-chart-collapse')?.addEventListener('show.bs.collapse', () => {
   document.getElementById('chart-chevron')?.classList.replace('bi-chevron-down', 'bi-chevron-up');
 });
+
+renderWeekChart();
 
 function showToast(msg, type = 'primary') {
   const el = document.getElementById('toast');
