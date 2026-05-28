@@ -80,6 +80,11 @@
             {% endif %}
           </div>
           <div class="d-flex gap-2">
+            {% if client.lead_list_url %}
+            <a href="{{ client.lead_list_url }}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Open in Google LSA">
+              <i class="bi bi-box-arrow-up-right"></i>
+            </a>
+            {% endif %}
             <form method="post" action="/admin/clients/{{ client.id }}/select">
               <button type="submit" class="btn btn-sm {% if current_client and current_client.id == client.id %}btn-primary{% else %}btn-outline-secondary{% endif %}">
                 {% if current_client and current_client.id == client.id %}

@@ -5,6 +5,11 @@
 {% set lead_base = '/portal/' + portal_slug + '/leads' if portal_mode else '/leads' %}
 
 {% block nav_extra %}
+  {% if not portal_mode and current_client and current_client.lead_list_url %}
+  <a href="{{ current_client.lead_list_url }}" target="_blank" class="btn btn-sm btn-light">
+    <i class="bi bi-box-arrow-up-right me-1"></i>Open in Google LSA
+  </a>
+  {% endif %}
   {% if not portal_mode and sync_enabled %}
     {% if is_authenticated %}
       <span class="badge bg-success status-pill"><i class="bi bi-check-circle me-1"></i>Connected to Google</span>
