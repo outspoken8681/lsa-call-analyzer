@@ -315,9 +315,16 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
     count_after = await get_leads_count(client_id)
     new_leads = max(0, count_after - count_before)
     logger.info(f"[{client['slug']}] Full scrape complete. {new_leads} new lead(s).")
+
+    # Accumulate today's new leads across all syncs; reset if it's a new day
+    today = _datetime.now(_EASTERN).strftime("%Y-%m-%d")
+    fresh = await get_client(client["id"])
+    last_date = (fresh.get("last_synced_at") or "")[:10]
+    daily_total = ((fresh.get("last_sync_new_leads") or 0) + new_leads) if last_date == today else new_leads
+
     await update_client(client["id"], {
         "last_synced_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S"),
-        "last_sync_new_leads": new_leads,
+        "last_sync_new_leads": daily_total,
     })
 
 

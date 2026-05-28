@@ -77,7 +77,7 @@
             <br><small class="text-muted">
               <i class="bi bi-arrow-clockwise me-1"></i>Last synced: {{ client.last_synced_at | fmt_call_date }}
               {% if client.last_sync_new_leads %}
-                &nbsp;<span class="badge bg-success">+{{ client.last_sync_new_leads }} new</span>
+                &nbsp;<span class="badge bg-success">+{{ client.last_sync_new_leads }} new today</span>
               {% endif %}
             </small>
             {% else %}
