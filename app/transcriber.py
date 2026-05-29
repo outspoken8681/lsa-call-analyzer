@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -90,7 +90,7 @@ async def transcribe_audio(audio_path: str, business_type: str | None = None) ->
         return {
             "transcript": transcript,
             "transcription_status": "completed",
-            "transcribed_at": datetime.utcnow().isoformat(),
+            "transcribed_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             **({"call_duration_seconds": int(duration)} if duration else {}),
         }
 

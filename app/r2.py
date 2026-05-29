@@ -9,7 +9,6 @@ works locally and on Railway.
 import asyncio
 import logging
 import os
-from functools import partial
 from typing import Optional
 
 import boto3
@@ -44,9 +43,8 @@ async def upload_audio(local_path: str, key: str) -> bool:
         logger.warning("R2 not configured — skipping upload")
         return False
     try:
-        loop = asyncio.get_event_loop()
         c = _client()
-        await loop.run_in_executor(None, partial(c.upload_file, local_path, R2_BUCKET, key))
+        await asyncio.to_thread(c.upload_file, local_path, R2_BUCKET, key)
         logger.info(f"R2 upload OK: {key}")
         return True
     except Exception as e:
@@ -59,14 +57,13 @@ async def get_audio_bytes(key: str) -> Optional[bytes]:
     if not _enabled():
         return None
     try:
-        loop = asyncio.get_event_loop()
         c = _client()
 
         def _fetch():
             resp = c.get_object(Bucket=R2_BUCKET, Key=key)
             return resp["Body"].read()
 
-        return await loop.run_in_executor(None, _fetch)
+        return await asyncio.to_thread(_fetch)
     except Exception as e:
         logger.error(f"R2 fetch failed for {key}: {e}")
         return None

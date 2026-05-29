@@ -335,14 +335,23 @@ async def update_webhook_delivery(delivery_id: int, updates: dict) -> None:
 
 
 async def get_pending_webhook_retries() -> list[dict]:
-    """Retrying deliveries whose next_attempt_at is now or past (UTC ISO comparison)."""
+    """Retrying deliveries whose next_attempt_at is now or past (UTC ISO comparison).
+
+    next_attempt_at is a fixed-width zero-padded ISO string (YYYY-MM-DDTHH:MM:SS),
+    so lexicographic comparison is equivalent to chronological comparison.
+    """
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     async with _get_pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM webhook_deliveries WHERE status = 'retrying' ORDER BY next_attempt_at ASC LIMIT 50"
+            """SELECT * FROM webhook_deliveries
+               WHERE status = 'retrying'
+                 AND next_attempt_at IS NOT NULL
+                 AND next_attempt_at <= $1
+               ORDER BY next_attempt_at ASC LIMIT 50""",
+            now_utc,
         )
-    from datetime import datetime
-    now_utc = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-    return [dict(r) for r in rows if (r["next_attempt_at"] or "9999") <= now_utc]
+    return [dict(r) for r in rows]
 
 
 async def get_failed_webhook_count(client_id: int) -> int:

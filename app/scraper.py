@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
@@ -481,7 +481,7 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                             "is_answered": 1,
                             "scrape_status": "completed",
                             "transcription_status": "completed",
-                            "scraped_at": datetime.utcnow().isoformat(),
+                            "scraped_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                         })
                         logger.info(f"Lead {lead_id}: message content extracted ({len(message_text)} chars)")
                     else:
@@ -500,7 +500,7 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                         "transcription_status": "completed",
                         "analysis_status": "completed",
                         "call_summary": "Missed call — no recording available.",
-                        "scraped_at": datetime.utcnow().isoformat(),
+                        "scraped_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     })
                     results.append(lead)
                     await go_to_list()
@@ -560,7 +560,7 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                         "audio_path": str(audio_path),
                         "is_answered": 1,
                         "scrape_status": "completed",
-                        "scraped_at": datetime.utcnow().isoformat(),
+                        "scraped_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     })
                 else:
                     lead.update({"scrape_status": "failed", "error_message": f"Download failed: HTTP {response.status}"})
@@ -642,7 +642,7 @@ async def scrape_lead_audio(client: dict, lead_id: str, lead_url: str) -> dict:
                 "transcription_status": "completed",
                 "analysis_status": "completed",
                 "call_summary": "Missed call — no recording available.",
-                "scraped_at": datetime.utcnow().isoformat(),
+                "scraped_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             }
 
         clicked_text = await page.evaluate("""() => {
@@ -694,7 +694,7 @@ async def scrape_lead_audio(client: dict, lead_id: str, lead_url: str) -> dict:
                 "audio_path": str(audio_path),
                 "is_answered": 1,
                 "scrape_status": "completed",
-                "scraped_at": datetime.utcnow().isoformat(),
+                "scraped_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             }
         else:
             await browser.close()

@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from openai import AsyncOpenAI
 
@@ -98,7 +98,7 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
             "call_summary": result.get("call_summary"),
             "analysis_json": json.dumps(result),
             "analysis_status": "completed",
-            "analyzed_at": datetime.utcnow().isoformat(),
+            "analyzed_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
 
     except Exception as e:

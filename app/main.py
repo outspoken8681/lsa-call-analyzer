@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime as _datetime, timedelta
+from datetime import datetime as _datetime, timedelta, timezone as _timezone
 from zoneinfo import ZoneInfo
 
 _EASTERN = ZoneInfo("America/New_York")
@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, Response
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -117,6 +117,30 @@ def _clear_login_failures(key: str) -> None:
     _login_locked.pop(key, None)
 
 
+# ── CSRF protection (double-submit cookie) ────────────────────────────────────
+import hmac as _hmac
+import secrets as _secrets
+
+CSRF_COOKIE = "csrf_token"
+
+
+def _csrf_valid(request: Request, submitted: str | None) -> bool:
+    cookie = request.cookies.get(CSRF_COOKIE)
+    return bool(cookie and submitted and _hmac.compare_digest(cookie, submitted))
+
+
+async def _csrf_header(request: Request) -> None:
+    """CSRF guard for fetch()/XHR calls — token travels in the X-CSRF-Token header."""
+    if not _csrf_valid(request, request.headers.get("x-csrf-token")):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+
+async def _csrf_form(request: Request, csrf_token: str = Form("")) -> None:
+    """CSRF guard for HTML <form> posts — token travels in a hidden csrf_token field."""
+    if not _csrf_valid(request, csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+
 def _sign(value: str) -> str:
     return _signer.dumps(value)
 
@@ -207,6 +231,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Triple Take", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+@app.middleware("http")
+async def _ensure_csrf_cookie(request: Request, call_next):
+    """Issue a CSRF token cookie (readable by JS) whenever one isn't present."""
+    response = await call_next(request)
+    if not request.cookies.get(CSRF_COOKIE):
+        response.set_cookie(
+            CSRF_COOKIE, _secrets.token_urlsafe(32),
+            samesite="lax", max_age=86400 * 30, path="/",
+        )
+    return response
 
 
 def _fmt_call_date(date_str: str | None) -> str:
@@ -527,7 +563,7 @@ async def _trigger_webhook_for_lead(client_id: int, lead_id: str) -> None:
 
     base = BASE_URL or ""
     success, code, msg = await webhook_deliver(delivery["id"], lead, client, base)
-    now_utc = _datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    now_utc = _datetime.now(_timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     if success:
         await update_webhook_delivery(delivery["id"], {
@@ -536,7 +572,7 @@ async def _trigger_webhook_for_lead(client_id: int, lead_id: str) -> None:
         })
         logger.info(f"[webhook] Lead {lead_id} → DELIVERED (HTTP {code}).")
     else:
-        next_at = (_datetime.utcnow() + timedelta(minutes=WEBHOOK_RETRY_MINUTES)).strftime("%Y-%m-%dT%H:%M:%S")
+        next_at = (_datetime.now(_timezone.utc) + timedelta(minutes=WEBHOOK_RETRY_MINUTES)).strftime("%Y-%m-%dT%H:%M:%S")
         await update_webhook_delivery(delivery["id"], {
             "status": "retrying", "attempts": 1,
             "last_attempt_at": now_utc, "response_code": code,
@@ -568,7 +604,7 @@ async def _process_webhook_retries() -> None:
         base    = BASE_URL or ""
         success, code, msg = await webhook_deliver(delivery["id"], lead, client, base)
         new_attempts = delivery["attempts"] + 1
-        now_utc      = _datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+        now_utc      = _datetime.now(_timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
         if success:
             await update_webhook_delivery(delivery["id"], {
@@ -587,7 +623,7 @@ async def _process_webhook_retries() -> None:
                 f"after {new_attempts} attempts: {msg}"
             )
         else:
-            next_at = (_datetime.utcnow() + timedelta(minutes=WEBHOOK_RETRY_MINUTES)).strftime("%Y-%m-%dT%H:%M:%S")
+            next_at = (_datetime.now(_timezone.utc) + timedelta(minutes=WEBHOOK_RETRY_MINUTES)).strftime("%Y-%m-%dT%H:%M:%S")
             await update_webhook_delivery(delivery["id"], {
                 "status": "retrying", "attempts": new_attempts,
                 "last_attempt_at": now_utc, "response_code": code,
@@ -609,7 +645,7 @@ async def admin_login_page(request: Request):
 
 
 @app.post("/admin/login")
-async def admin_login(request: Request, password: str = Form(...)):
+async def admin_login(request: Request, password: str = Form(...), _csrf: None = Depends(_csrf_form)):
     key = f"admin:{_client_ip(request)}"
     locked = _login_lockout_remaining(key)
     if locked:
@@ -628,7 +664,7 @@ async def admin_login(request: Request, password: str = Form(...)):
 
 
 @app.post("/admin/logout")
-async def admin_logout():
+async def admin_logout(_csrf: None = Depends(_csrf_form)):
     response = RedirectResponse("/admin/login", status_code=302)
     response.delete_cookie("admin_session")
     response.delete_cookie("admin_client_id")
@@ -653,6 +689,7 @@ async def admin_create_client(
     lead_list_url: str = Form(""),
     portal_password: str = Form(""),
     business_type: str = Form(""),
+    _csrf: None = Depends(_csrf_form),
 ):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
@@ -679,6 +716,7 @@ async def admin_update_client(
     webhook_url: str = Form(""),
     webhook_secret: str = Form(""),
     business_type: str = Form(""),
+    _csrf: None = Depends(_csrf_form),
 ):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
@@ -699,7 +737,7 @@ async def admin_update_client(
 
 
 @app.post("/admin/clients/{client_id}/delete")
-async def admin_delete_client(request: Request, client_id: int):
+async def admin_delete_client(request: Request, client_id: int, _csrf: None = Depends(_csrf_form)):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
     await delete_client(client_id)
@@ -707,7 +745,7 @@ async def admin_delete_client(request: Request, client_id: int):
 
 
 @app.post("/admin/clients/{client_id}/select")
-async def admin_select_client(client_id: int):
+async def admin_select_client(client_id: int, _csrf: None = Depends(_csrf_form)):
     response = RedirectResponse("/leads", status_code=302)
     response.set_cookie("admin_client_id", _sign(str(client_id)), httponly=True, samesite="lax", max_age=86400 * 30)
     return response
@@ -733,7 +771,7 @@ async def scan_status(request: Request):
 
 
 @app.post("/admin/scan-all")
-async def scan_all_clients(request: Request, background_tasks: BackgroundTasks):
+async def scan_all_clients(request: Request, background_tasks: BackgroundTasks, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     if not await ensure_auth():
@@ -842,7 +880,7 @@ async def lead_detail(request: Request, lead_id: str):
 # ── Admin: auth flow ──────────────────────────────────────────────────────────
 
 @app.post("/auth/login")
-async def trigger_login(request: Request, background_tasks: BackgroundTasks):
+async def trigger_login(request: Request, background_tasks: BackgroundTasks, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     background_tasks.add_task(open_login_browser)
@@ -850,7 +888,7 @@ async def trigger_login(request: Request, background_tasks: BackgroundTasks):
 
 
 @app.post("/auth/confirm")
-async def confirm_auth(request: Request):
+async def confirm_auth(request: Request, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     result = await confirm_login()
@@ -867,7 +905,7 @@ async def auth_status(request: Request):
 # ── Admin: scrape + pipeline ──────────────────────────────────────────────────
 
 @app.post("/scrape")
-async def trigger_scrape(request: Request, background_tasks: BackgroundTasks, max_leads: int = 50):
+async def trigger_scrape(request: Request, background_tasks: BackgroundTasks, max_leads: int = 50, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     if not await ensure_auth():
@@ -883,7 +921,7 @@ async def trigger_scrape(request: Request, background_tasks: BackgroundTasks, ma
 
 
 @app.post("/leads/backfill-names")
-async def backfill_names(request: Request, background_tasks: BackgroundTasks):
+async def backfill_names(request: Request, background_tasks: BackgroundTasks, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
@@ -940,7 +978,7 @@ async def _backfill_names_task(client_id: int):
 
 
 @app.post("/leads/{lead_id}/process")
-async def process_lead(request: Request, lead_id: str, background_tasks: BackgroundTasks):
+async def process_lead(request: Request, lead_id: str, background_tasks: BackgroundTasks, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
@@ -955,7 +993,7 @@ async def process_lead(request: Request, lead_id: str, background_tasks: Backgro
 
 
 @app.post("/leads/{lead_id}/reanalyze")
-async def reanalyze_lead(request: Request, lead_id: str, background_tasks: BackgroundTasks):
+async def reanalyze_lead(request: Request, lead_id: str, background_tasks: BackgroundTasks, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
@@ -981,7 +1019,7 @@ async def reanalyze_lead(request: Request, lead_id: str, background_tasks: Backg
 
 
 @app.post("/leads/{lead_id}/contact-name")
-async def update_contact_name(request: Request, lead_id: str):
+async def update_contact_name(request: Request, lead_id: str, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
@@ -995,7 +1033,7 @@ async def update_contact_name(request: Request, lead_id: str):
 
 
 @app.delete("/leads/{lead_id}")
-async def remove_lead(request: Request, lead_id: str):
+async def remove_lead(request: Request, lead_id: str, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
@@ -1050,7 +1088,7 @@ async def portal_login_page(request: Request, slug: str):
 
 
 @app.post("/portal/{slug}/login")
-async def portal_login(request: Request, slug: str, password: str = Form(...)):
+async def portal_login(request: Request, slug: str, password: str = Form(...), _csrf: None = Depends(_csrf_form)):
     client = await get_client_by_slug(slug)
     if not client or not client.get("portal_password"):
         raise HTTPException(status_code=404, detail="Portal not found")

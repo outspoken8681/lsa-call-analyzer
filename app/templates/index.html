@@ -492,7 +492,7 @@ function showToast(msg, type = 'primary') {
 
 {% if not portal_mode %}
 async function triggerLogin() {
-  const res = await fetch('/auth/login', { method: 'POST' });
+  const res = await fetch('/auth/login', { method: 'POST', headers: csrfHeaders() });
   const data = await res.json();
   showToast(data.message, 'warning');
   document.getElementById('btn-connect').classList.add('d-none');
@@ -500,7 +500,7 @@ async function triggerLogin() {
 }
 
 async function confirmLogin() {
-  const res = await fetch('/auth/confirm', { method: 'POST' });
+  const res = await fetch('/auth/confirm', { method: 'POST', headers: csrfHeaders() });
   const data = await res.json();
   if (data.success) {
     showToast(data.message, 'success');
@@ -511,7 +511,7 @@ async function confirmLogin() {
 }
 
 async function triggerScrape() {
-  const res = await fetch('/scrape', { method: 'POST' });
+  const res = await fetch('/scrape', { method: 'POST', headers: csrfHeaders() });
   if (res.ok) {
     const data = await res.json();
     showToast(data.message);
@@ -524,7 +524,7 @@ async function triggerScrape() {
 
 async function deleteLead(leadId, btn) {
   if (!confirm('Remove this lead from the list?')) return;
-  const res = await fetch(`/leads/${leadId}`, { method: 'DELETE' });
+  const res = await fetch(`/leads/${leadId}`, { method: 'DELETE', headers: csrfHeaders() });
   if (res.ok) {
     btn.closest('tr').remove();
   } else {
@@ -569,7 +569,7 @@ if (!PORTAL_MODE) {
       try {
         await fetch(`/leads/${leadId}/contact-name`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: csrfHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ contact_name: name || null }),
         });
       } catch (e) {

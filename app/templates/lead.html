@@ -405,7 +405,7 @@ function showToast(msg, type = 'primary') {
     try {
       await fetch(`/leads/${LEAD_ID}/contact-name`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ contact_name: name || null }),
       });
     } catch (e) {
@@ -421,14 +421,14 @@ function showToast(msg, type = 'primary') {
 })();
 
 async function processLead() {
-  const res = await fetch(`/leads/${LEAD_ID}/process`, { method: 'POST' });
+  const res = await fetch(`/leads/${LEAD_ID}/process`, { method: 'POST', headers: csrfHeaders() });
   const data = await res.json();
   showToast(data.message || data.detail, res.ok ? 'primary' : 'danger');
   if (res.ok) setTimeout(() => location.reload(), 6000);
 }
 
 async function reanalyze() {
-  const res = await fetch(`/leads/${LEAD_ID}/reanalyze`, { method: 'POST' });
+  const res = await fetch(`/leads/${LEAD_ID}/reanalyze`, { method: 'POST', headers: csrfHeaders() });
   const data = await res.json();
   showToast(data.message || data.detail, res.ok ? 'primary' : 'danger');
   if (res.ok) setTimeout(() => location.reload(), 5000);
@@ -436,7 +436,7 @@ async function reanalyze() {
 
 async function deleteLead() {
   if (!confirm('Remove this lead? This cannot be undone.')) return;
-  const res = await fetch(`/leads/${LEAD_ID}`, { method: 'DELETE' });
+  const res = await fetch(`/leads/${LEAD_ID}`, { method: 'DELETE', headers: csrfHeaders() });
   if (res.ok) {
     window.location.href = '/';
   } else {

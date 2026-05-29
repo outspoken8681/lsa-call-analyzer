@@ -61,6 +61,7 @@
         <div class="alert alert-danger py-2 small">{{ error }}</div>
         {% endif %}
         <form method="post" action="/admin/login">
+          <input type="hidden" name="csrf_token">
           <div class="mb-3">
             <label class="form-label small fw-medium">Password</label>
             <input type="password" name="password" class="form-control" autofocus required>
@@ -72,5 +73,12 @@
       </div>
     </div>
   </div>
+  <script>
+    (function () {
+      var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+      var t = m ? decodeURIComponent(m[1]) : '';
+      document.querySelectorAll('input[name="csrf_token"]').forEach(function (el) { el.value = t; });
+    })();
+  </script>
 </body>
 </html>
