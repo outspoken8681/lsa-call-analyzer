@@ -1228,6 +1228,49 @@ async def debug_screenshot(request: Request, lead_id: str = None):
     return FileResponse(path, media_type="image/png")
 
 
+@app.get("/admin/status")
+async def admin_status(request: Request):
+    """Operational snapshot — confirms whether auto-sync and Google auth are live."""
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
+
+    google_ok = await ensure_auth()
+
+    # Next scheduled auto-sync run times (only present when SYNC_ENABLED)
+    next_runs = []
+    for job in _scheduler.get_jobs():
+        if job.id.startswith("auto_sync"):
+            nrt = getattr(job, "next_run_time", None)
+            if nrt:
+                next_runs.append(nrt.isoformat())
+    next_runs.sort()
+
+    clients = await get_all_clients()
+    client_status = [
+        {
+            "name":            c["name"],
+            "slug":            c["slug"],
+            "auto_sync_eligible": bool(c.get("lead_list_url")),
+            "last_synced_at":  c.get("last_synced_at"),
+            "last_sync_new_leads": c.get("last_sync_new_leads"),
+            "webhook_configured": bool((c.get("webhook_url") or "").strip()),
+        }
+        for c in clients
+    ]
+
+    return {
+        "sync_enabled":          SYNC_ENABLED,
+        "google_authenticated":  google_ok,
+        "auto_sync_active":      SYNC_ENABLED and google_ok,
+        "next_auto_sync_runs":   next_runs,
+        "scan_in_progress":      _scan_state["running"],
+        "scan_current":          _scan_state.get("current") or None,
+        "client_count":          len(clients),
+        "clients":               client_status,
+        "server_time":           _datetime.now(_timezone.utc).isoformat(),
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
