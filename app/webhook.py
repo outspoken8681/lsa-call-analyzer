@@ -14,6 +14,8 @@ from datetime import datetime as _dt, timezone
 
 import httpx
 
+from app.tokens import make_audio_token
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,14 +28,17 @@ def sign_body(body: bytes, secret: str) -> str:
 
 # ── Payload ───────────────────────────────────────────────────────────────────
 
-def build_payload(lead: dict, base_url: str) -> dict:
+def build_payload(lead: dict, client: dict, base_url: str) -> dict:
     """Assemble the JSON payload that is POST-ed to the CRM webhook."""
     ad = lead.get("analysis_data") or {}
 
-    # Prefer cloud (R2) URL; fall back to a server-hosted URL when base_url known
-    audio_url: str | None = lead.get("audio_url") or None
-    if not audio_url and lead.get("audio_path") and base_url:
-        audio_url = f"{base_url.rstrip('/')}/audio/{lead['id']}"
+    # Audio is served from our own /audio/{id} endpoint, authorised by a signed,
+    # time-limited token so the CRM can fetch it without an admin session.
+    audio_url: str | None = None
+    has_audio = bool(lead.get("audio_url") or lead.get("audio_path"))
+    if has_audio and base_url and client.get("id") is not None:
+        token = make_audio_token(client["id"], str(lead["id"]))
+        audio_url = f"{base_url.rstrip('/')}/audio/{lead['id']}?token={token}"
 
     return {
         "event":     "lead.analyzed",
@@ -87,7 +92,7 @@ async def deliver(
     if not webhook_url:
         return False, None, "No webhook URL configured for this client."
 
-    payload = build_payload(lead, base_url)
+    payload = build_payload(lead, client, base_url)
     body    = json.dumps(payload, default=str).encode("utf-8")
 
     signature = f"sha256={sign_body(body, webhook_secret)}" if webhook_secret else ""

@@ -1,13 +1,15 @@
 # CRM Webhook Integration Guide
 
 **Provided by:** Triple Take Marketing — Google LSA Analyzer  
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
 ## Overview
 
 The LSA Analyzer automatically pushes fully analysed lead records to your CRM as soon as analysis completes.  Each delivery is a single HTTPS `POST` to a webhook URL you configure.  Deliveries are signed so you can verify they genuinely came from us.
+
+> **Integration model — push, not pull.** This is a *push* integration: **you** expose an HTTPS endpoint, and **we** `POST` each new lead to it. There is no polling API to query on your side — you receive data as it is produced. The only request you make back to us is an optional `GET` to download a call recording (see `audio_url` below), and that link is pre-authorised by a token embedded in the payload.
 
 ---
 
@@ -80,6 +82,8 @@ function verify(string $body, string $secret, string $signatureHeader): bool {
 
 > **Important:** Always use a constant-time comparison function (`hmac.compare_digest`, `crypto.timingSafeEqual`, `hash_equals`) to prevent timing attacks.
 
+> **Note:** The signature is computed only when a shared secret has been configured for your account (it always is for production integrations). If `X-Webhook-Signature` is ever empty or absent, treat the request as **unverified and reject it**. Confirm with Triple Take that your secret is set before going live.
+
 ---
 
 ## Request Format
@@ -113,7 +117,7 @@ User-Agent: TripleTake-LSA-Analyzer/1.0
     "answered": false,
     "charge_status": "Not charged",
     "duration_seconds": null,
-    "audio_url": "https://storage.example.com/audio/314161249.mp3",
+    "audio_url": "https://lsa.tripletakemarketing.com/audio/314161249?token=eyJjIjoxLCJsIjoiMzE0MTYxMjQ5In0.aBcD...",
     "transcript": "...",
     "summary": "Missed call — no recording available.",
     "qualification_score": null,
@@ -143,7 +147,7 @@ User-Agent: TripleTake-LSA-Analyzer/1.0
 | `lead.answered` | boolean \| null | Whether the call was answered (`null` for messages) |
 | `lead.charge_status` | string \| null | Google charge status (e.g. `"Charged"`, `"Not charged"`) |
 | `lead.duration_seconds` | integer \| null | Call duration in seconds |
-| `lead.audio_url` | string \| null | Direct URL to the MP3 recording (valid for 24 h if signed) |
+| `lead.audio_url` | string \| null | Pre-authorised HTTPS URL to the call recording. A plain `GET` returns the MP3 (`Content-Type: audio/mpeg`) — no auth headers needed; the embedded `token` grants read access to this one lead's audio and is valid for **90 days**. `null` when there is no recording (e.g. a missed call or a message lead). Append `&download=true` to receive it as a file attachment. |
 | `lead.transcript` | string \| null | Full call transcript or message thread |
 | `lead.summary` | string \| null | One-paragraph AI summary of the call |
 | `lead.qualification_score` | integer \| null | AI score 1–5 (5 = highest quality lead) |
@@ -187,7 +191,7 @@ If your endpoint returns a non-2xx response or the request times out, the delive
 
 After 5 failed attempts the delivery is marked **permanently failed** and an alert is shown in the admin dashboard.  A Triple Take administrator must resolve the issue and re-trigger delivery manually if needed.
 
-**Idempotency:** The `X-Webhook-Id` header uniquely identifies each delivery attempt.  We never deliver the same lead twice if a prior attempt succeeded; use `lead.id` as your own idempotency key.
+**Idempotency:** The `X-Webhook-Id` header identifies the delivery record; it stays the **same** across automatic retries of the same lead (it does not change per attempt).  We never re-deliver a lead once a prior attempt has succeeded, so use **`lead.id`** as your idempotency key.
 
 ---
 
@@ -254,7 +258,9 @@ curl -X POST https://your-crm.example.com/webhooks/leads \
 | All deliveries time out | Webhook URL is not publicly reachable or firewall is blocking |
 | 401 / 403 from your CRM | CRM requires additional authentication headers — contact Triple Take |
 | Duplicate records | Not deduplicating on `lead.id` in your CRM |
-| Missing audio URL | Lead was a missed call with no recording, or audio has expired |
+| `audio_url` is `null` | Lead was a missed call/voicemail with no recording, or a message lead (text), which has no audio |
+| `GET` on `audio_url` returns `403` | The `token` query param was dropped or altered — fetch the full URL exactly as delivered, unmodified |
+| `GET` on `audio_url` returns `404` | The recording is no longer on the server (rare) — contact Triple Take to re-source it |
 
 ---
 

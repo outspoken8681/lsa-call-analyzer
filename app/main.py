@@ -47,6 +47,7 @@ from app.database import (
 from app.webhook import deliver as webhook_deliver
 from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list
 from app.r2 import get_audio_bytes as r2_get_audio
+from app.tokens import verify_audio_token
 from app.transcriber import transcribe_audio
 
 logging.basicConfig(
@@ -1050,14 +1051,19 @@ async def remove_lead(request: Request, lead_id: str, _csrf: None = Depends(_csr
 
 
 @app.get("/audio/{lead_id}")
-async def serve_audio(request: Request, lead_id: str, download: bool = False):
-    if not _is_admin(request):
-        raise HTTPException(status_code=403)
-    ctx = await _admin_context(request)
-    client = ctx["current_client"]
-    if not client:
-        raise HTTPException(status_code=400, detail="No client selected.")
-    lead = await get_lead(client["id"], lead_id)
+async def serve_audio(request: Request, lead_id: str, download: bool = False, token: str | None = None):
+    # Two ways in: a signed audio token (used by CRM webhook consumers) that
+    # authorises one specific lead, or a logged-in admin session.
+    client_id = verify_audio_token(token, lead_id) if token else None
+    if client_id is None:
+        if not _is_admin(request):
+            raise HTTPException(status_code=403)
+        ctx = await _admin_context(request)
+        client = ctx["current_client"]
+        if not client:
+            raise HTTPException(status_code=400, detail="No client selected.")
+        client_id = client["id"]
+    lead = await get_lead(client_id, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Audio not found")
     headers = {}
