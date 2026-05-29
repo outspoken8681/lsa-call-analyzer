@@ -133,6 +133,16 @@ async def _scheduled_sync():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    # Restore Google auth state from env var (used on Railway where there is no display)
+    _auth_b64 = os.getenv("PLAYWRIGHT_AUTH_B64", "").strip()
+    if _auth_b64:
+        import base64 as _b64
+        _auth_path = Path(os.getenv("AUTH_STATE_PATH", "auth.json"))
+        _auth_path.parent.mkdir(parents=True, exist_ok=True)
+        _auth_path.write_bytes(_b64.b64decode(_auth_b64))
+        logger.info("[auth] Google auth state restored from PLAYWRIGHT_AUTH_B64.")
+
     # Webhook retry checker — always active (works on Railway and locally)
     _scheduler.add_job(
         _process_webhook_retries, "interval", minutes=5,
