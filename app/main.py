@@ -780,19 +780,25 @@ async def lead_detail(request: Request, lead_id: str):
 # ── Admin: auth flow ──────────────────────────────────────────────────────────
 
 @app.post("/auth/login")
-async def trigger_login(background_tasks: BackgroundTasks):
+async def trigger_login(request: Request, background_tasks: BackgroundTasks):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     background_tasks.add_task(open_login_browser)
     return JSONResponse({"message": "Browser opening — log in to Google, navigate to the account picker, then click Confirm."})
 
 
 @app.post("/auth/confirm")
-async def confirm_auth():
+async def confirm_auth(request: Request):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     result = await confirm_login()
     return JSONResponse(result)
 
 
 @app.get("/auth/status")
-async def auth_status():
+async def auth_status(request: Request):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     return {"authenticated": await ensure_auth()}
 
 
@@ -800,6 +806,8 @@ async def auth_status():
 
 @app.post("/scrape")
 async def trigger_scrape(request: Request, background_tasks: BackgroundTasks, max_leads: int = 50):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     if not await ensure_auth():
         raise HTTPException(status_code=401, detail="Not authenticated.")
     ctx = await _admin_context(request)
@@ -871,6 +879,8 @@ async def _backfill_names_task(client_id: int):
 
 @app.post("/leads/{lead_id}/process")
 async def process_lead(request: Request, lead_id: str, background_tasks: BackgroundTasks):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
     client = ctx["current_client"]
     if not client:
@@ -884,6 +894,8 @@ async def process_lead(request: Request, lead_id: str, background_tasks: Backgro
 
 @app.post("/leads/{lead_id}/reanalyze")
 async def reanalyze_lead(request: Request, lead_id: str, background_tasks: BackgroundTasks):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
     client = ctx["current_client"]
     if not client:
@@ -908,6 +920,8 @@ async def reanalyze_lead(request: Request, lead_id: str, background_tasks: Backg
 
 @app.post("/leads/{lead_id}/contact-name")
 async def update_contact_name(request: Request, lead_id: str):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
     client = ctx["current_client"]
     if not client:
@@ -920,6 +934,8 @@ async def update_contact_name(request: Request, lead_id: str):
 
 @app.delete("/leads/{lead_id}")
 async def remove_lead(request: Request, lead_id: str):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
     client = ctx["current_client"]
     if not client:
@@ -935,6 +951,8 @@ async def remove_lead(request: Request, lead_id: str):
 
 @app.get("/audio/{lead_id}")
 async def serve_audio(request: Request, lead_id: str, download: bool = False):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     ctx = await _admin_context(request)
     client = ctx["current_client"]
     if not client:
@@ -1076,6 +1094,8 @@ async def portal_audio(request: Request, slug: str, lead_id: str, download: bool
 
 @app.get("/debug/page")
 async def debug_page(request: Request):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
     if not await ensure_auth():
         raise HTTPException(status_code=401, detail="Not authenticated.")
     ctx = await _admin_context(request)
@@ -1086,7 +1106,12 @@ async def debug_page(request: Request):
 
 
 @app.get("/debug/screenshot")
-async def debug_screenshot(lead_id: str = None):
+async def debug_screenshot(request: Request, lead_id: str = None):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
+    # Guard against path traversal — lead IDs are numeric strings
+    if lead_id and not lead_id.isalnum():
+        raise HTTPException(status_code=400, detail="Invalid lead_id")
     path = Path(f"debug_lead_{lead_id}.png") if lead_id else Path("debug_screenshot.png")
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"No screenshot at {path}")
