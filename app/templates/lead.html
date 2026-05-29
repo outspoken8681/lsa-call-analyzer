@@ -154,6 +154,45 @@
       </div>
     </div>
 
+    <!-- CRM Webhook status (admin only) -->
+    {% if not portal_mode and webhook_deliveries %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3"><i class="bi bi-send me-2 text-primary"></i>CRM Webhook</h6>
+        {% for d in webhook_deliveries %}
+        <div class="d-flex justify-content-between align-items-start mb-2 small">
+          <div>
+            <span class="text-muted">Attempt {{ d.attempts }}</span>
+            {% if d.last_attempt_at %}
+            <span class="text-muted ms-1">· {{ d.last_attempt_at | fmt_call_date }}</span>
+            {% endif %}
+            {% if d.response_code %}
+            <span class="badge bg-secondary ms-1" style="font-size:10px;">HTTP {{ d.response_code }}</span>
+            {% endif %}
+            {% if d.status == 'retrying' and d.next_attempt_at %}
+            <div class="text-muted" style="font-size:10px;">Next retry: {{ d.next_attempt_at | fmt_call_date }}</div>
+            {% endif %}
+            {% if d.error_message %}
+            <div class="text-danger mt-1" style="font-size:10px;word-break:break-all;">{{ d.error_message[:200] }}</div>
+            {% endif %}
+          </div>
+          <div class="ms-2 flex-shrink-0">
+            {% if d.status == 'success' %}
+              <span class="badge bg-success">Delivered</span>
+            {% elif d.status == 'retrying' %}
+              <span class="badge bg-warning text-dark">Retrying</span>
+            {% elif d.status == 'failed' %}
+              <span class="badge bg-danger">Failed</span>
+            {% else %}
+              <span class="badge bg-secondary">Pending</span>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Actions -->
     {% if not portal_mode %}
     <div class="card border-0 shadow-sm">

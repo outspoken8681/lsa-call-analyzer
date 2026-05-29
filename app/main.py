@@ -25,19 +25,26 @@ from app.analyzer import analyze_transcript
 from app.database import (
     close_db,
     create_client,
+    create_webhook_delivery,
     delete_client,
     delete_lead,
     get_all_clients,
     get_all_leads,
     get_client,
     get_client_by_slug,
+    get_failed_webhook_count,
     get_lead,
     get_leads_count,
+    get_pending_webhook_retries,
+    get_webhook_deliveries_for_lead,
+    get_webhook_delivery,
     init_db,
     update_client,
     update_lead,
+    update_webhook_delivery,
     upsert_lead,
 )
+from app.webhook import deliver as webhook_deliver
 from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list
 from app.r2 import get_audio_bytes as r2_get_audio
 from app.transcriber import transcribe_audio
@@ -61,6 +68,10 @@ _admin_hash = bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()) if ADMIN_
 
 # ── Scan-all state (in-memory, single-process) ────────────────────────────────
 _scan_state: dict = {"running": False, "current": "", "done": [], "total": 0}
+
+# ── Webhook constants ─────────────────────────────────────────────────────────
+MAX_WEBHOOK_ATTEMPTS  = 5
+WEBHOOK_RETRY_MINUTES = 10
 
 
 def _sign(value: str) -> str:
@@ -122,13 +133,18 @@ async def _scheduled_sync():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Webhook retry checker — always active (works on Railway and locally)
+    _scheduler.add_job(
+        _process_webhook_retries, "interval", minutes=5,
+        id="webhook_retries", misfire_grace_time=60,
+    )
     if SYNC_ENABLED:
-        # Run at 7 am, 12 pm, and 6 pm in the system's local time
         _scheduler.add_job(_scheduled_sync, CronTrigger(hour=10, minute=0),  id="auto_sync_1", misfire_grace_time=300)
         _scheduler.add_job(_scheduled_sync, CronTrigger(hour=13, minute=0),  id="auto_sync_2", misfire_grace_time=300)
         _scheduler.add_job(_scheduled_sync, CronTrigger(hour=16, minute=30), id="auto_sync_3", misfire_grace_time=300)
-        _scheduler.start()
         logger.info("[scheduler] Auto-sync scheduled at 10 am, 1 pm, 4:30 pm (local time).")
+    _scheduler.start()
+    logger.info("[scheduler] Webhook retry checker active (every 5 min).")
     yield
     if _scheduler.running:
         _scheduler.shutdown(wait=False)
@@ -259,6 +275,8 @@ async def _process_lead(client_id: int, lead_id: str):
         if google_name:
             analysis_result["contact_name"] = google_name
         await update_lead(client_id, lead_id, analysis_result)
+        if analysis_result.get("analysis_status") == "completed":
+            await _trigger_webhook_for_lead(client_id, lead_id)
 
 
 async def _scrape_and_process_all(client: dict, max_leads: int = 50):
@@ -354,6 +372,8 @@ async def _transcribe_and_analyze(client_id: int, lead_id: str):
         if google_name:
             result["contact_name"] = google_name
         await update_lead(client_id, lead_id, result)
+        if result.get("analysis_status") == "completed":
+            await _trigger_webhook_for_lead(client_id, lead_id)
 
 
 def _enrich_leads(leads: list[dict]) -> list[dict]:
@@ -427,6 +447,104 @@ async def _get_week_chart_data(client_id: int) -> tuple[str, str]:
     return json.dumps(chart_leads), json.dumps(all_weeks)
 
 
+# ── Webhook helpers ───────────────────────────────────────────────────────────
+
+async def _trigger_webhook_for_lead(client_id: int, lead_id: str) -> None:
+    """Fire-and-record a webhook push for a freshly analysed lead."""
+    client = await get_client(client_id)
+    if not client or not (client.get("webhook_url") or "").strip():
+        return  # not configured
+
+    # No duplicates — skip if a successful or in-flight delivery already exists
+    existing = await get_webhook_delivery(client_id, lead_id)
+    if existing and existing["status"] in ("success", "pending", "retrying"):
+        logger.info(f"[webhook] Lead {lead_id}: delivery already '{existing['status']}', skipping.")
+        return
+
+    delivery = await create_webhook_delivery(client_id, lead_id)
+    lead = await get_lead(client_id, lead_id)
+    if not lead:
+        return
+    if lead.get("analysis_json"):
+        try:
+            lead["analysis_data"] = json.loads(lead["analysis_json"])
+        except Exception:
+            lead["analysis_data"] = {}
+
+    base = BASE_URL or ""
+    success, code, msg = await webhook_deliver(delivery["id"], lead, client, base)
+    now_utc = _datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+
+    if success:
+        await update_webhook_delivery(delivery["id"], {
+            "status": "success", "attempts": 1,
+            "last_attempt_at": now_utc, "response_code": code,
+        })
+        logger.info(f"[webhook] Lead {lead_id} → DELIVERED (HTTP {code}).")
+    else:
+        next_at = (_datetime.utcnow() + timedelta(minutes=WEBHOOK_RETRY_MINUTES)).strftime("%Y-%m-%dT%H:%M:%S")
+        await update_webhook_delivery(delivery["id"], {
+            "status": "retrying", "attempts": 1,
+            "last_attempt_at": now_utc, "response_code": code,
+            "error_message": msg, "next_attempt_at": next_at,
+        })
+        logger.warning(f"[webhook] Lead {lead_id} → FAILED attempt 1: {msg}. Retry at {next_at}.")
+
+
+async def _process_webhook_retries() -> None:
+    """APScheduler job — retry webhook deliveries that are past due."""
+    pending = await get_pending_webhook_retries()
+    if not pending:
+        return
+    logger.info(f"[webhook] Processing {len(pending)} retry delivery(ies)...")
+    for delivery in pending:
+        client = await get_client(delivery["client_id"])
+        lead   = await get_lead(delivery["client_id"], delivery["lead_id"])
+        if not lead or not client:
+            await update_webhook_delivery(delivery["id"], {
+                "status": "failed", "error_message": "Lead or client no longer exists.",
+            })
+            continue
+        if lead.get("analysis_json"):
+            try:
+                lead["analysis_data"] = json.loads(lead["analysis_json"])
+            except Exception:
+                lead["analysis_data"] = {}
+
+        base    = BASE_URL or ""
+        success, code, msg = await webhook_deliver(delivery["id"], lead, client, base)
+        new_attempts = delivery["attempts"] + 1
+        now_utc      = _datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+
+        if success:
+            await update_webhook_delivery(delivery["id"], {
+                "status": "success", "attempts": new_attempts,
+                "last_attempt_at": now_utc, "response_code": code, "error_message": None,
+            })
+            logger.info(f"[webhook] Lead {delivery['lead_id']} → DELIVERED on attempt {new_attempts}.")
+        elif new_attempts >= MAX_WEBHOOK_ATTEMPTS:
+            await update_webhook_delivery(delivery["id"], {
+                "status": "failed", "attempts": new_attempts,
+                "last_attempt_at": now_utc, "response_code": code,
+                "error_message": msg, "next_attempt_at": None,
+            })
+            logger.error(
+                f"[webhook] Lead {delivery['lead_id']} → PERMANENTLY FAILED "
+                f"after {new_attempts} attempts: {msg}"
+            )
+        else:
+            next_at = (_datetime.utcnow() + timedelta(minutes=WEBHOOK_RETRY_MINUTES)).strftime("%Y-%m-%dT%H:%M:%S")
+            await update_webhook_delivery(delivery["id"], {
+                "status": "retrying", "attempts": new_attempts,
+                "last_attempt_at": now_utc, "response_code": code,
+                "error_message": msg, "next_attempt_at": next_at,
+            })
+            logger.warning(
+                f"[webhook] Lead {delivery['lead_id']} → FAILED attempt {new_attempts}, "
+                f"retry at {next_at}."
+            )
+
+
 # ── Admin auth routes ─────────────────────────────────────────────────────────
 
 @app.get("/admin/login", response_class=HTMLResponse)
@@ -488,10 +606,19 @@ async def admin_update_client(
     slug: str = Form(...),
     lead_list_url: str = Form(""),
     portal_password: str = Form(""),
+    webhook_url: str = Form(""),
+    webhook_secret: str = Form(""),
 ):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
-    updates: dict = {"name": name, "slug": slug.lower().strip(), "lead_list_url": lead_list_url or None}
+    updates: dict = {
+        "name":          name,
+        "slug":          slug.lower().strip(),
+        "lead_list_url": lead_list_url or None,
+        "webhook_url":   webhook_url.strip() or None,
+    }
+    if webhook_secret.strip():
+        updates["webhook_secret"] = webhook_secret.strip()
     if portal_password:
         updates["portal_password"] = bcrypt.hashpw(portal_password.encode(), bcrypt.gensalt()).decode()
         updates["portal_password_plain"] = portal_password
@@ -595,6 +722,7 @@ async def dashboard(request: Request, page: int = 1):
                                   filter_charged=filter_charged)
     is_authenticated = await ensure_auth()
     chart_leads_json, chart_days_json = await _get_week_chart_data(client_id)
+    failed_webhooks = await get_failed_webhook_count(client_id)
 
     return templates.TemplateResponse(request, "index.html", {
         **ctx,
@@ -608,6 +736,7 @@ async def dashboard(request: Request, page: int = 1):
         "filter_charged": filter_charged or [],
         "weekly_chart_leads_json": chart_leads_json,
         "weekly_chart_weeks_json": chart_days_json,
+        "failed_webhook_count": failed_webhooks,
     })
 
 
@@ -630,7 +759,12 @@ async def lead_detail(request: Request, lead_id: str):
         except Exception:
             lead["analysis_data"] = {}
 
-    return templates.TemplateResponse(request, "lead.html", {**ctx, "lead": lead})
+    webhook_deliveries = await get_webhook_deliveries_for_lead(current_client["id"], lead_id)
+    return templates.TemplateResponse(request, "lead.html", {
+        **ctx,
+        "lead": lead,
+        "webhook_deliveries": webhook_deliveries,
+    })
 
 
 # ── Admin: auth flow ──────────────────────────────────────────────────────────

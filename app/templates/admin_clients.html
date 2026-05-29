@@ -119,6 +119,25 @@
               <label class="form-label small fw-medium">Lead List URL</label>
               <input type="url" name="lead_list_url" class="form-control form-control-sm" value="{{ client.lead_list_url or '' }}">
             </div>
+            <div class="col-12">
+              <label class="form-label small fw-medium">CRM Webhook URL <span class="text-muted fw-normal">(leave blank to disable)</span></label>
+              <input type="url" name="webhook_url" class="form-control form-control-sm"
+                     value="{{ client.webhook_url or '' }}"
+                     placeholder="https://your-crm.example.com/webhooks/leads">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-medium">Webhook Secret <span class="text-muted fw-normal">(leave blank to keep current)</span></label>
+              <div class="input-group input-group-sm">
+                <input type="text" name="webhook_secret" id="wh-secret-{{ client.id }}"
+                       class="form-control form-control-sm font-monospace"
+                       placeholder="{% if client.webhook_secret %}••••••••••••••••{% else %}No secret set{% endif %}"
+                       autocomplete="off">
+                <button type="button" class="btn btn-outline-secondary btn-sm"
+                        onclick="genWebhookSecret('{{ client.id }}')">
+                  <i class="bi bi-arrow-repeat me-1"></i>Generate
+                </button>
+              </div>
+            </div>
             <div class="col-sm-8">
               <label class="form-label small fw-medium">New Portal Password <span class="text-muted fw-normal">(leave blank to keep current)</span></label>
               <input type="password" name="portal_password" class="form-control form-control-sm">
@@ -225,6 +244,13 @@ async function pollStatus() {
   } catch (e) {}
 })();
 {% endif %}
+
+function genWebhookSecret(clientId) {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  document.getElementById('wh-secret-' + clientId).value =
+    Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 function toSlug(str) {
   return str

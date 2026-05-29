@@ -44,6 +44,17 @@
   </div>
 </div>
 
+{# ── CRM webhook failure banner ───────────────────────────────────────────────── #}
+{% if not portal_mode and (failed_webhook_count | default(0)) > 0 %}
+<div class="alert alert-danger d-flex align-items-center gap-2 mb-3 py-2" role="alert">
+  <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+  <div class="small">
+    <strong>{{ failed_webhook_count }} CRM webhook delivery failure{{ 's' if failed_webhook_count != 1 else '' }}.</strong>
+    Open individual lead records to see error details and delivery history.
+  </div>
+</div>
+{% endif %}
+
 {# ── Weekly lead chart ────────────────────────────────────────────────────────── #}
 {% if total > 0 %}
 <div class="card border-0 shadow-sm mb-3">

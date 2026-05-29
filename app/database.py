@@ -95,6 +95,23 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_name TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_password_plain TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_synced_at TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_sync_new_leads INTEGER;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id              SERIAL PRIMARY KEY,
+    lead_id         TEXT    NOT NULL,
+    client_id       INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    status          TEXT    NOT NULL DEFAULT 'pending',
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    next_attempt_at TEXT,
+    response_code   INTEGER,
+    error_message   TEXT,
+    created_at      TEXT NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC')
+);
+CREATE INDEX IF NOT EXISTS idx_wh_deliveries_status ON webhook_deliveries (status);
+CREATE INDEX IF NOT EXISTS idx_wh_deliveries_lead   ON webhook_deliveries (client_id, lead_id);
 """
 
 
@@ -276,3 +293,71 @@ async def delete_lead(client_id: int, lead_id: str) -> None:
             "DELETE FROM leads WHERE client_id = $1 AND id = $2",
             client_id, lead_id,
         )
+
+
+# ── Webhook delivery CRUD ─────────────────────────────────────────────────────
+
+async def create_webhook_delivery(client_id: int, lead_id: str) -> dict:
+    async with _get_pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO webhook_deliveries (client_id, lead_id) VALUES ($1, $2) RETURNING *",
+            client_id, lead_id,
+        )
+        return dict(row)
+
+
+async def get_webhook_delivery(client_id: int, lead_id: str) -> Optional[dict]:
+    """Most recent delivery record for this (client, lead) pair."""
+    async with _get_pool().acquire() as conn:
+        row = await conn.fetchrow(
+            """SELECT * FROM webhook_deliveries
+               WHERE client_id = $1 AND lead_id = $2
+               ORDER BY created_at DESC LIMIT 1""",
+            client_id, lead_id,
+        )
+        return dict(row) if row else None
+
+
+async def update_webhook_delivery(delivery_id: int, updates: dict) -> None:
+    if not updates:
+        return
+    set_parts = []
+    values    = [delivery_id]
+    for i, (k, v) in enumerate(updates.items(), start=2):
+        set_parts.append(f"{k} = ${i}")
+        values.append(v)
+    async with _get_pool().acquire() as conn:
+        await conn.execute(
+            f"UPDATE webhook_deliveries SET {', '.join(set_parts)} WHERE id = $1",
+            *values,
+        )
+
+
+async def get_pending_webhook_retries() -> list[dict]:
+    """Retrying deliveries whose next_attempt_at is now or past (UTC ISO comparison)."""
+    async with _get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM webhook_deliveries WHERE status = 'retrying' ORDER BY next_attempt_at ASC LIMIT 50"
+        )
+    from datetime import datetime
+    now_utc = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    return [dict(r) for r in rows if (r["next_attempt_at"] or "9999") <= now_utc]
+
+
+async def get_failed_webhook_count(client_id: int) -> int:
+    async with _get_pool().acquire() as conn:
+        return await conn.fetchval(
+            "SELECT COUNT(*) FROM webhook_deliveries WHERE client_id = $1 AND status = 'failed'",
+            client_id,
+        ) or 0
+
+
+async def get_webhook_deliveries_for_lead(client_id: int, lead_id: str) -> list[dict]:
+    async with _get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT * FROM webhook_deliveries
+               WHERE client_id = $1 AND lead_id = $2
+               ORDER BY created_at DESC""",
+            client_id, lead_id,
+        )
+        return [dict(r) for r in rows]
