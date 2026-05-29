@@ -97,6 +97,7 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_synced_at TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_sync_new_leads INTEGER;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_url TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS business_type TEXT;
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id              SERIAL PRIMARY KEY,

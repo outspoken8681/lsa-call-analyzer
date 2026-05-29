@@ -74,6 +74,49 @@ MAX_WEBHOOK_ATTEMPTS  = 5
 WEBHOOK_RETRY_MINUTES = 10
 
 
+# ── Login rate limiting (in-memory, single-process) ───────────────────────────
+import time as _time
+
+_LOGIN_MAX_ATTEMPTS = 5          # failures allowed within the window
+_LOGIN_WINDOW_SEC   = 300        # rolling window for counting failures
+_LOGIN_LOCKOUT_SEC  = 900        # lockout duration once tripped
+_login_failures: dict[str, list[float]] = {}
+_login_locked:   dict[str, float]       = {}
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _login_lockout_remaining(key: str) -> int:
+    """Return seconds remaining on an active lockout for *key*, else 0."""
+    until = _login_locked.get(key)
+    if until and until > _time.time():
+        return int(until - _time.time())
+    if until:
+        _login_locked.pop(key, None)  # expired
+    return 0
+
+
+def _record_login_failure(key: str) -> None:
+    now = _time.time()
+    fails = [t for t in _login_failures.get(key, []) if now - t < _LOGIN_WINDOW_SEC]
+    fails.append(now)
+    _login_failures[key] = fails
+    if len(fails) >= _LOGIN_MAX_ATTEMPTS:
+        _login_locked[key] = now + _LOGIN_LOCKOUT_SEC
+        _login_failures.pop(key, None)
+        logger.warning(f"[login] {key} locked out for {_LOGIN_LOCKOUT_SEC}s after {len(fails)} failures.")
+
+
+def _clear_login_failures(key: str) -> None:
+    _login_failures.pop(key, None)
+    _login_locked.pop(key, None)
+
+
 def _sign(value: str) -> str:
     return _signer.dumps(value)
 
@@ -271,7 +314,7 @@ async def _process_lead(client_id: int, lead_id: str):
             })
             return
         await update_lead(client_id, lead_id, {"transcription_status": "in_progress"})
-        transcription_result = await transcribe_audio(audio_path)
+        transcription_result = await transcribe_audio(audio_path, client.get("business_type"))
         await update_lead(client_id, lead_id, transcription_result)
         if transcription_result.get("transcription_status") != "completed":
             return
@@ -368,8 +411,9 @@ async def _transcribe_and_analyze(client_id: int, lead_id: str):
         audio_path = lead.get("audio_path")
         if not audio_path:
             return
+        client = await get_client(client_id)
         await update_lead(client_id, lead_id, {"transcription_status": "in_progress"})
-        result = await transcribe_audio(audio_path)
+        result = await transcribe_audio(audio_path, (client or {}).get("business_type"))
         await update_lead(client_id, lead_id, result)
         if result.get("transcription_status") != "completed":
             return
@@ -566,10 +610,20 @@ async def admin_login_page(request: Request):
 
 @app.post("/admin/login")
 async def admin_login(request: Request, password: str = Form(...)):
+    key = f"admin:{_client_ip(request)}"
+    locked = _login_lockout_remaining(key)
+    if locked:
+        return templates.TemplateResponse(
+            request, "admin_login.html",
+            {"error": f"Too many attempts. Try again in {locked // 60 + 1} minute(s)."},
+            status_code=429,
+        )
     if ADMIN_PASSWORD and bcrypt.checkpw(password.encode(), _admin_hash):
+        _clear_login_failures(key)
         response = RedirectResponse("/", status_code=302)
         response.set_cookie("admin_session", _sign("1"), httponly=True, samesite="lax", max_age=86400 * 30)
         return response
+    _record_login_failure(key)
     return templates.TemplateResponse(request, "admin_login.html", {"error": "Incorrect password"}, status_code=401)
 
 
@@ -598,13 +652,19 @@ async def admin_create_client(
     slug: str = Form(...),
     lead_list_url: str = Form(""),
     portal_password: str = Form(""),
+    business_type: str = Form(""),
 ):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
     pw_hash = bcrypt.hashpw(portal_password.encode(), bcrypt.gensalt()).decode() if portal_password else None
     client = await create_client(name, slug.lower().strip(), lead_list_url or None, pw_hash)
+    extra: dict = {}
     if portal_password:
-        await update_client(client["id"], {"portal_password_plain": portal_password})
+        extra["portal_password_plain"] = portal_password
+    if business_type.strip():
+        extra["business_type"] = business_type.strip()
+    if extra:
+        await update_client(client["id"], extra)
     return RedirectResponse("/admin/clients", status_code=302)
 
 
@@ -618,6 +678,7 @@ async def admin_update_client(
     portal_password: str = Form(""),
     webhook_url: str = Form(""),
     webhook_secret: str = Form(""),
+    business_type: str = Form(""),
 ):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
@@ -626,6 +687,7 @@ async def admin_update_client(
         "slug":          slug.lower().strip(),
         "lead_list_url": lead_list_url or None,
         "webhook_url":   webhook_url.strip() or None,
+        "business_type": business_type.strip() or None,
     }
     if webhook_secret.strip():
         updates["webhook_secret"] = webhook_secret.strip()
@@ -992,10 +1054,20 @@ async def portal_login(request: Request, slug: str, password: str = Form(...)):
     client = await get_client_by_slug(slug)
     if not client or not client.get("portal_password"):
         raise HTTPException(status_code=404, detail="Portal not found")
+    key = f"portal:{slug}:{_client_ip(request)}"
+    locked = _login_lockout_remaining(key)
+    if locked:
+        return templates.TemplateResponse(
+            request, "portal_login.html",
+            {"client": client, "error": f"Too many attempts. Try again in {locked // 60 + 1} minute(s)."},
+            status_code=429,
+        )
     if bcrypt.checkpw(password.encode(), client["portal_password"].encode()):
+        _clear_login_failures(key)
         response = RedirectResponse(f"/portal/{slug}/leads", status_code=302)
         response.set_cookie("portal_session", _sign(slug), httponly=True, samesite="lax", max_age=86400 * 30)
         return response
+    _record_login_failure(key)
     return templates.TemplateResponse(request, "portal_login.html", {"client": client, "error": "Incorrect password"}, status_code=401)
 
 

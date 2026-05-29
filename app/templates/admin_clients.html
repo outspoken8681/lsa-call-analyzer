@@ -46,6 +46,10 @@
             <label class="form-label small fw-medium">Lead List URL</label>
             <input type="url" name="lead_list_url" class="form-control form-control-sm" placeholder="https://ads.google.com/localservices/inbox?cid=...">
           </div>
+          <div class="mb-2">
+            <label class="form-label small fw-medium">Business Type <span class="text-muted fw-normal">(improves transcription)</span></label>
+            <input type="text" name="business_type" class="form-control form-control-sm" placeholder="e.g. HVAC company, plumbing service, personal injury law firm">
+          </div>
           <div class="mb-3">
             <label class="form-label small fw-medium">Portal Password <span class="text-muted fw-normal">(leave blank to disable portal)</span></label>
             <input type="password" name="portal_password" class="form-control form-control-sm">
@@ -118,6 +122,12 @@
             <div class="col-12">
               <label class="form-label small fw-medium">Lead List URL</label>
               <input type="url" name="lead_list_url" class="form-control form-control-sm" value="{{ client.lead_list_url or '' }}">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-medium">Business Type <span class="text-muted fw-normal">(improves transcription accuracy)</span></label>
+              <input type="text" name="business_type" class="form-control form-control-sm"
+                     value="{{ client.business_type or '' }}"
+                     placeholder="e.g. HVAC company, plumbing service, personal injury law firm">
             </div>
             <div class="col-12">
               <label class="form-label small fw-medium">CRM Webhook URL <span class="text-muted fw-normal">(leave blank to disable)</span></label>
