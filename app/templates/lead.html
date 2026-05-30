@@ -197,6 +197,13 @@
     {% if not portal_mode %}
     <div class="card border-0 shadow-sm">
       <div class="card-body d-grid gap-2">
+        {% if current_client and current_client.portal_password %}
+        <button class="btn btn-success btn-sm" id="btn-copy-client-link"
+                data-link="{{ base_url }}/portal/{{ current_client.slug }}/leads/{{ lead.id }}"
+                onclick="copyClientLink(this)">
+          <i class="bi bi-link-45deg me-1"></i>Copy Client Link
+        </button>
+        {% endif %}
         <button class="btn btn-primary btn-sm" onclick="processLead()">
           <i class="bi bi-play-fill me-1"></i>Run Full Pipeline
         </button>
@@ -441,6 +448,16 @@ async function deleteLead() {
     window.location.href = '/';
   } else {
     showToast('Delete failed', 'danger');
+  }
+}
+
+async function copyClientLink(btn) {
+  const link = btn.dataset.link;
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast('Client link copied — they can open it after logging into their portal.', 'success');
+  } catch (e) {
+    window.prompt('Copy this client link:', link);  // fallback for non-secure contexts
   }
 }
 {% endif %}

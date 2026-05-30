@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 _EASTERN = ZoneInfo("America/New_York")
 from pathlib import Path
+from urllib.parse import quote
 
 import bcrypt
 from dotenv import load_dotenv
@@ -1082,43 +1083,54 @@ async def serve_audio(request: Request, lead_id: str, download: bool = False, to
 
 # ── Read-only client portal ───────────────────────────────────────────────────
 
+def _safe_portal_next(slug: str, nxt: str | None) -> str:
+    """Validate a post-login redirect target — must be a path within this portal."""
+    default = f"/portal/{slug}/leads"
+    if nxt and nxt.startswith(f"/portal/{slug}/") and "//" not in nxt[1:] and "\\" not in nxt:
+        return nxt
+    return default
+
+
 @app.get("/portal/{slug}", response_class=HTMLResponse)
-async def portal_login_page(request: Request, slug: str):
+async def portal_login_page(request: Request, slug: str, next: str = ""):
     client = await get_client_by_slug(slug)
     if not client or not client.get("portal_password"):
         raise HTTPException(status_code=404, detail="Portal not found")
+    dest = _safe_portal_next(slug, next)
     # Already logged in?
     if _portal_slug(request) == slug:
-        return RedirectResponse(f"/portal/{slug}/leads", status_code=302)
-    return templates.TemplateResponse(request, "portal_login.html", {"client": client})
+        return RedirectResponse(dest, status_code=302)
+    return templates.TemplateResponse(request, "portal_login.html", {"client": client, "next": dest})
 
 
 @app.post("/portal/{slug}/login")
-async def portal_login(request: Request, slug: str, password: str = Form(...), _csrf: None = Depends(_csrf_form)):
+async def portal_login(request: Request, slug: str, password: str = Form(...), next: str = Form(""), _csrf: None = Depends(_csrf_form)):
     client = await get_client_by_slug(slug)
     if not client or not client.get("portal_password"):
         raise HTTPException(status_code=404, detail="Portal not found")
+    dest = _safe_portal_next(slug, next)
     key = f"portal:{slug}:{_client_ip(request)}"
     locked = _login_lockout_remaining(key)
     if locked:
         return templates.TemplateResponse(
             request, "portal_login.html",
-            {"client": client, "error": f"Too many attempts. Try again in {locked // 60 + 1} minute(s)."},
+            {"client": client, "next": dest, "error": f"Too many attempts. Try again in {locked // 60 + 1} minute(s)."},
             status_code=429,
         )
     if bcrypt.checkpw(password.encode(), client["portal_password"].encode()):
         _clear_login_failures(key)
-        response = RedirectResponse(f"/portal/{slug}/leads", status_code=302)
+        response = RedirectResponse(dest, status_code=302)
         response.set_cookie("portal_session", _sign(slug), httponly=True, samesite="lax", max_age=86400 * 30)
         return response
     _record_login_failure(key)
-    return templates.TemplateResponse(request, "portal_login.html", {"client": client, "error": "Incorrect password"}, status_code=401)
+    return templates.TemplateResponse(request, "portal_login.html", {"client": client, "next": dest, "error": "Incorrect password"}, status_code=401)
 
 
 @app.get("/portal/{slug}/leads", response_class=HTMLResponse)
 async def portal_leads(request: Request, slug: str, page: int = 1):
     if _portal_slug(request) != slug:
         return RedirectResponse(f"/portal/{slug}", status_code=302)
+    # (deep links to a specific lead carry ?next= via portal_lead_detail)
     client = await get_client_by_slug(slug)
     if not client:
         raise HTTPException(status_code=404, detail="Portal not found")
@@ -1159,7 +1171,7 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
 @app.get("/portal/{slug}/leads/{lead_id}", response_class=HTMLResponse)
 async def portal_lead_detail(request: Request, slug: str, lead_id: str):
     if _portal_slug(request) != slug:
-        return RedirectResponse(f"/portal/{slug}", status_code=302)
+        return RedirectResponse(f"/portal/{slug}?next={quote(request.url.path)}", status_code=302)
     client = await get_client_by_slug(slug)
     if not client:
         raise HTTPException(status_code=404, detail="Portal not found")

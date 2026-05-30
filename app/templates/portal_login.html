@@ -60,6 +60,7 @@
         {% endif %}
         <form method="post" action="/portal/{{ client.slug }}/login">
           <input type="hidden" name="csrf_token">
+          <input type="hidden" name="next" value="{{ next or '' }}">
           <div class="mb-3">
             <label class="form-label small fw-medium">Password</label>
             <input type="password" name="password" class="form-control" autofocus required>
