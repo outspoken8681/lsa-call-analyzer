@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,9 +16,44 @@ MAX_FILE_SIZE_MB = 25
 
 DEFAULT_BUSINESS_TYPE = "local service business"
 
+_LABEL_WORDS = {"receptionist", "caller"}
+
+
+def _word_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _labeling_preserved_content(raw: str, labeled: str, max_missing_ratio: float = 0.15) -> bool:
+    """
+    True if the speaker-labeled output still contains (nearly) all the words from the
+    raw transcript. The labeling pass is only allowed to add speaker prefixes and line
+    breaks — if it drops/rewrites content (which GPT does intermittently), we reject it.
+    """
+    raw_words = _word_tokens(raw)
+    if not raw_words:
+        return True
+    counts: dict[str, int] = {}
+    for w in _word_tokens(labeled):
+        if w in _LABEL_WORDS:
+            continue  # don't let added 'RECEPTIONIST'/'CALLER' labels mask real words
+        counts[w] = counts.get(w, 0) + 1
+    missing = 0
+    for w in raw_words:
+        if counts.get(w, 0) > 0:
+            counts[w] -= 1
+        else:
+            missing += 1
+    return (missing / len(raw_words)) <= max_missing_ratio
+
 
 async def _label_speakers(transcript: str, business_type: str | None = None) -> str:
-    """Use GPT-4o-mini to reformat a raw transcript with RECEPTIONIST/CALLER labels."""
+    """
+    Reformat a raw transcript with RECEPTIONIST/CALLER labels via GPT-4o-mini.
+
+    The model occasionally drops or rewrites content during reformatting, which can turn
+    a real lead into a misleading snippet. We verify the labeled output preserves the raw
+    transcript's words and fall back to the verbatim raw transcript if it does not.
+    """
     biz = (business_type or DEFAULT_BUSINESS_TYPE).strip() or DEFAULT_BUSINESS_TYPE
     try:
         response = await client.chat.completions.create(
@@ -29,8 +65,11 @@ async def _label_speakers(transcript: str, business_type: str | None = None) -> 
                         f"You are formatting a phone call transcript for a {biz}. "
                         "The call is between someone answering for the business (the receptionist) "
                         "and a potential customer (the caller). "
-                        "Reformat the transcript so each speaker change starts on a new line, "
-                        "prefixed with either 'RECEPTIONIST:' or 'CALLER:' based on context. "
+                        "Your ONLY job is to insert speaker labels and line breaks. "
+                        "Reproduce every spoken word VERBATIM — do not add, remove, omit, "
+                        "summarize, paraphrase, correct, or reorder any words. "
+                        "Start each speaker change on a new line, prefixed with either "
+                        "'RECEPTIONIST:' or 'CALLER:' based on context. "
                         "The receptionist typically answers the phone, gathers information, and explains next steps. "
                         "The caller typically describes the service or problem they need help with. "
                         "Return only the formatted transcript — no explanations, no extra text."
@@ -40,7 +79,11 @@ async def _label_speakers(transcript: str, business_type: str | None = None) -> 
             ],
             temperature=0,
         )
-        return response.choices[0].message.content.strip()
+        labeled = response.choices[0].message.content.strip()
+        if labeled and _labeling_preserved_content(transcript, labeled):
+            return labeled
+        logger.warning("Speaker labeling altered/dropped content — using raw transcript instead.")
+        return transcript
     except Exception as e:
         logger.warning(f"Speaker labeling failed, using raw transcript: {e}")
         return transcript
