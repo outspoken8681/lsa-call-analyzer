@@ -399,14 +399,19 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
         and l.get("analysis_status") == "completed"
         and l.get("transcript")
     }
+    # Phone leads already fully processed — audio is in R2, so skip re-scrape
+    # (re-scraping would reset their statuses and can fail, wiping a good lead).
+    done_phone_ids = {
+        str(l["id"]) for l in all_existing
+        if l.get("lead_type") != "message"
+        and l.get("analysis_status") == "completed"
+        and l.get("transcript")
+    }
     logger.info(f"[{client['slug']}] Starting full scrape (max {max_leads})...")
-    try:
-        leads = await scrape_all_leads(client, max_leads=max_leads, skip_message_ids=done_message_ids)
-    except RuntimeError as e:
-        logger.error(f"Scrape failed: {e}")
-        return
 
-    for lead in leads:
+    async def _persist_and_process(lead: dict) -> None:
+        """Save + process each lead the instant it is scraped, so a mid-scrape
+        crash never discards work already done."""
         existing = await get_lead(client_id, lead["id"])
         already_done = existing and existing.get("analysis_status") == "completed"
         # If Google gave us a real name and contact_name not already set, copy it over
@@ -416,10 +421,22 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
         await upsert_lead(client_id, lead)
         if already_done:
             logger.info(f"Lead {lead['id']} already analyzed, skipping")
-            continue
+            return
         is_message = lead.get("lead_type") == "message"
         if lead.get("scrape_status") == "completed" and (lead.get("audio_path") or is_message):
             await _transcribe_and_analyze(client_id, lead["id"])
+
+    try:
+        await scrape_all_leads(client, max_leads=max_leads,
+                               skip_message_ids=done_message_ids,
+                               skip_phone_ids=done_phone_ids,
+                               on_lead=_persist_and_process)
+    except RuntimeError as e:
+        logger.error(f"Scrape failed: {e}")
+        return
+    except Exception as e:
+        # A mid-scrape crash no longer loses work — leads were persisted as they came.
+        logger.exception(f"[{client['slug']}] Scrape ended early: {e}")
 
     count_after = await get_leads_count(client_id)
     new_leads = max(0, count_after - count_before)

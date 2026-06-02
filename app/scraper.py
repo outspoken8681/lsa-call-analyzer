@@ -34,6 +34,19 @@ def _clean_charge_status(text: str | None) -> str | None:
     return re.sub(r'\s+\w+_\w+', '', text).strip() or text
 
 
+async def _safe_go_to_list(go_to_list, lead_id: str) -> None:
+    """
+    Return to the lead-list table between leads. Google occasionally navigates
+    mid-evaluation ("Execution context was destroyed"), which previously crashed
+    the entire scrape. Swallow such errors so one hiccup never aborts the run;
+    the next lead's row-click will simply fail gracefully if we're off-list.
+    """
+    try:
+        await go_to_list()
+    except Exception as e:
+        logger.warning(f"go_to_list failed after lead {lead_id} (continuing): {e}")
+
+
 # Shared state for the login flow
 _login_event: asyncio.Event | None = None
 _login_page = None
@@ -317,13 +330,32 @@ async def get_lead_list(client: dict) -> list[dict]:
     return leads
 
 
-async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: set = None) -> list[dict]:
+async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: set = None,
+                           skip_phone_ids: set = None, on_lead=None) -> list[dict]:
     """
     Scrape all phone leads for a client.
     client dict must have: slug, lead_list_url
+
+    skip_message_ids / skip_phone_ids: lead IDs already fully processed in the DB.
+    These are skipped without re-visiting Google, so a re-sync never clobbers the
+    status of an already-completed lead (audio lives in R2, not on ephemeral disk).
+
+    on_lead: optional async callback invoked with each lead dict the moment it is
+    scraped. Lets the caller persist + process leads incrementally, so a crash
+    partway through never discards work already done.
     """
     if not await ensure_auth():
         raise RuntimeError("No auth state. Use Connect Google Account first.")
+    skip_phone_ids = skip_phone_ids or set()
+
+    async def _emit(lead: dict) -> None:
+        """Hand a freshly scraped lead to the caller; never let it crash the scrape."""
+        if on_lead is None:
+            return
+        try:
+            await on_lead(dict(lead))
+        except Exception as cb_err:
+            logger.exception(f"on_lead callback failed for {lead.get('id')}: {cb_err}")
 
     client_audio_dir = AUDIO_DIR / client["slug"]
     client_audio_dir.mkdir(parents=True, exist_ok=True)
@@ -427,6 +459,20 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                     lead.pop("analysis_status", None)
                     lead["scrape_status"] = "completed"
                     results.append(lead)
+                    await _emit(lead)
+                    continue
+
+                # ── Skip phone leads already fully processed in the DB ────────
+                # Audio lives in R2, not on Railway's ephemeral disk, so we must
+                # NOT re-scrape these — doing so resets their statuses to pending
+                # and can fail ("SHOW RECORDING not found"), wiping a good lead.
+                if lead.get("lead_type") != "message" and lead_id in skip_phone_ids:
+                    logger.info(f"Lead {lead_id}: phone lead already completed in DB — skipping")
+                    lead.pop("transcription_status", None)
+                    lead.pop("analysis_status", None)
+                    lead["scrape_status"] = "completed"
+                    results.append(lead)
+                    await _emit(lead)
                     continue
 
                 # ── Skip phone leads whose audio is already on disk ───────────
@@ -445,6 +491,7 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                             "scrape_status": "completed",
                         })
                         results.append(lead)
+                        await _emit(lead)
                         continue
 
                 clicked = await page.evaluate("""(leadId) => {
@@ -464,6 +511,7 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                     logger.warning(f"Lead {lead_id}: row not found in table")
                     lead.update({"scrape_status": "failed", "error_message": "Row not found"})
                     results.append(lead)
+                    await _emit(lead)
                     continue
 
                 await page.wait_for_timeout(3000)
@@ -488,7 +536,8 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                         lead.update({"scrape_status": "failed", "error_message": "Could not extract message content"})
                         logger.warning(f"Lead {lead_id}: no message content found")
                     results.append(lead)
-                    await go_to_list()
+                    await _emit(lead)
+                    await _safe_go_to_list(go_to_list, lead_id)
                     continue
 
                 page_text = await page.evaluate("() => document.body.innerText.toUpperCase()")
@@ -503,7 +552,8 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                         "scraped_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     })
                     results.append(lead)
-                    await go_to_list()
+                    await _emit(lead)
+                    await _safe_go_to_list(go_to_list, lead_id)
                     continue
 
                 clicked_text = await page.evaluate("""() => {
@@ -521,7 +571,8 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                     logger.warning(f"Lead {lead_id}: SHOW RECORDING not found")
                     lead.update({"scrape_status": "failed", "error_message": "SHOW RECORDING not found"})
                     results.append(lead)
-                    await go_to_list()
+                    await _emit(lead)
+                    await _safe_go_to_list(go_to_list, lead_id)
                     continue
 
                 try:
@@ -543,7 +594,8 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                     logger.warning(f"Lead {lead_id}: no audio URL found")
                     lead.update({"scrape_status": "failed", "error_message": "No audio URL found"})
                     results.append(lead)
-                    await go_to_list()
+                    await _emit(lead)
+                    await _safe_go_to_list(go_to_list, lead_id)
                     continue
 
                 audio_path = client_audio_dir / f"{lead_id}.mp3"
@@ -566,13 +618,15 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                     lead.update({"scrape_status": "failed", "error_message": f"Download failed: HTTP {response.status}"})
 
                 results.append(lead)
+                await _emit(lead)
 
             except Exception as e:
                 logger.exception(f"Lead {lead_id}: unexpected error: {e}")
                 lead.update({"scrape_status": "failed", "error_message": str(e)})
                 results.append(lead)
+                await _emit(lead)
 
-            await go_to_list()
+            await _safe_go_to_list(go_to_list, lead_id)
 
         await browser.close()
 
