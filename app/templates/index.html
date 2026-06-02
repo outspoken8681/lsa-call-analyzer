@@ -494,6 +494,12 @@ function showToast(msg, type = 'primary') {
 async function triggerLogin() {
   const res = await fetch('/auth/login', { method: 'POST', headers: csrfHeaders() });
   const data = await res.json();
+  if (!res.ok) {
+    // Headless server (e.g. production): a browser can't open here. Show the
+    // instructions and keep the Connect button as-is.
+    showToast(data.message || 'Could not start browser login.', 'warning');
+    return;
+  }
   showToast(data.message, 'warning');
   document.getElementById('btn-connect').classList.add('d-none');
   document.getElementById('btn-confirm').classList.remove('d-none');

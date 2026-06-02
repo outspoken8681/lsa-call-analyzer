@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime as _datetime, timedelta, timezone as _timezone
 from zoneinfo import ZoneInfo
@@ -39,14 +40,18 @@ from app.database import (
     get_pending_webhook_retries,
     get_webhook_deliveries_for_lead,
     get_webhook_delivery,
+    get_setting_updated_at,
+    AUTH_STATE_KEY,
     init_db,
+    load_auth_state,
+    save_auth_state,
     update_client,
     update_lead,
     update_webhook_delivery,
     upsert_lead,
 )
 from app.webhook import deliver as webhook_deliver
-from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list
+from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list, AUTH_STATE_PATH
 from app.r2 import get_audio_bytes as r2_get_audio
 from app.tokens import verify_audio_token
 from app.transcriber import transcribe_audio
@@ -63,6 +68,9 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 BASE_URL = os.getenv("BASE_URL", "").rstrip("/")
 SYNC_ENABLED = os.getenv("SYNC_ENABLED", "false").lower() == "true"
+# Bearer token the local push_google_auth script uses to upload a fresh Google
+# session. Defaults to ADMIN_PASSWORD so there's nothing extra to configure.
+AUTH_UPLOAD_TOKEN = os.getenv("AUTH_UPLOAD_TOKEN", "") or ADMIN_PASSWORD
 _signer = URLSafeTimedSerializer(SECRET_KEY)
 
 # Pre-hash admin password at startup
@@ -203,14 +211,21 @@ async def _scheduled_sync():
 async def lifespan(app: FastAPI):
     await init_db()
 
-    # Restore Google auth state from env var (used on Railway where there is no display)
-    _auth_b64 = os.getenv("PLAYWRIGHT_AUTH_B64", "").strip()
-    if _auth_b64:
-        import base64 as _b64
-        _auth_path = Path(os.getenv("AUTH_STATE_PATH", "auth.json"))
-        _auth_path.parent.mkdir(parents=True, exist_ok=True)
-        _auth_path.write_bytes(_b64.b64decode(_auth_b64))
-        logger.info("[auth] Google auth state restored from PLAYWRIGHT_AUTH_B64.")
+    # Restore Google auth state. Railway's disk is ephemeral, so the durable copy
+    # lives in the DB (uploaded via the local push_google_auth script). Prefer that;
+    # fall back to the PLAYWRIGHT_AUTH_B64 env var only for first-time bootstrap.
+    _auth_path = Path(os.getenv("AUTH_STATE_PATH", "auth.json"))
+    _auth_path.parent.mkdir(parents=True, exist_ok=True)
+    _db_auth = await load_auth_state()
+    if _db_auth:
+        _auth_path.write_text(_db_auth)
+        logger.info("[auth] Google auth state restored from database.")
+    else:
+        _auth_b64 = os.getenv("PLAYWRIGHT_AUTH_B64", "").strip()
+        if _auth_b64:
+            import base64 as _b64
+            _auth_path.write_bytes(_b64.b64decode(_auth_b64))
+            logger.info("[auth] Google auth state restored from PLAYWRIGHT_AUTH_B64 (env bootstrap).")
 
     # Webhook retry checker — always active (works on Railway and locally)
     _scheduler.add_job(
@@ -898,10 +913,28 @@ async def lead_detail(request: Request, lead_id: str):
 
 # ── Admin: auth flow ──────────────────────────────────────────────────────────
 
+def _is_headless_server() -> bool:
+    """True when running where no GUI browser can open (e.g. Railway)."""
+    # A real desktop has DISPLAY (Linux) or is macOS/Windows. Railway has neither.
+    return os.name == "posix" and not os.environ.get("DISPLAY") and sys.platform == "linux"
+
+
 @app.post("/auth/login")
 async def trigger_login(request: Request, background_tasks: BackgroundTasks, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
+    # The visible-browser login only works on a machine with a display. On the
+    # hosted server there is no screen, so explain the real procedure instead of
+    # pretending a window opened.
+    if _is_headless_server():
+        return JSONResponse({
+            "message": (
+                "This server has no display, so a Google login window can't open here. "
+                "Run the local auth tool on your computer instead:  "
+                "python scripts/push_google_auth.py — it opens Chromium, you log in, "
+                "and it pushes the session straight to this app."
+            ),
+        }, status_code=409)
     background_tasks.add_task(open_login_browser)
     return JSONResponse({"message": "Browser opening — log in to Google, navigate to the account picker, then click Confirm."})
 
@@ -911,14 +944,51 @@ async def confirm_auth(request: Request, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
     result = await confirm_login()
+    # Persist whatever was just captured so it survives redeploys.
+    if result.get("success"):
+        try:
+            await save_auth_state(Path(AUTH_STATE_PATH).read_text())
+        except Exception as e:
+            logger.warning(f"[auth] Could not persist auth state to DB: {e}")
     return JSONResponse(result)
+
+
+@app.post("/auth/upload")
+async def upload_auth(request: Request):
+    """
+    Accept a Google/Playwright auth-state JSON and install it (file + DB).
+    Authenticated by a bearer token, so the local push_google_auth script can
+    call it directly — no browser session or CSRF needed.
+    """
+    token = (request.headers.get("authorization", "") or "").removeprefix("Bearer ").strip()
+    if not AUTH_UPLOAD_TOKEN or not _hmac.compare_digest(token, AUTH_UPLOAD_TOKEN):
+        raise HTTPException(status_code=403, detail="Invalid or missing upload token.")
+    raw = await request.body()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body must be valid auth-state JSON.")
+    if not isinstance(data, dict) or "cookies" not in data:
+        raise HTTPException(status_code=400, detail="JSON missing 'cookies' — not a valid auth state.")
+
+    text = json.dumps(data)
+    Path(AUTH_STATE_PATH).parent.mkdir(parents=True, exist_ok=True)
+    Path(AUTH_STATE_PATH).write_text(text)
+    await save_auth_state(text)
+    ok = await ensure_auth()
+    logger.info(f"[auth] Auth state uploaded via /auth/upload (cookies={len(data.get('cookies', []))}).")
+    return {"success": ok, "cookies": len(data.get("cookies", [])), "authenticated": ok}
 
 
 @app.get("/auth/status")
 async def auth_status(request: Request):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
-    return {"authenticated": await ensure_auth()}
+    return {
+        "authenticated": await ensure_auth(),
+        "last_updated": await get_setting_updated_at(AUTH_STATE_KEY),
+        "headless_server": _is_headless_server(),
+    }
 
 
 # ── Admin: scrape + pipeline ──────────────────────────────────────────────────

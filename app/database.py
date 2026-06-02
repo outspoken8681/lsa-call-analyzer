@@ -113,7 +113,16 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_wh_deliveries_status ON webhook_deliveries (status);
 CREATE INDEX IF NOT EXISTS idx_wh_deliveries_lead   ON webhook_deliveries (client_id, lead_id);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
+
+# Key under which the Google/Playwright auth state JSON is stored.
+AUTH_STATE_KEY = "google_auth_state"
 
 
 # ── Client CRUD ───────────────────────────────────────────────────────────────
@@ -371,3 +380,35 @@ async def get_webhook_deliveries_for_lead(client_id: int, lead_id: str) -> list[
             client_id, lead_id,
         )
         return [dict(r) for r in rows]
+
+
+# ── App settings (durable key/value) ──────────────────────────────────────────
+
+async def set_setting(key: str, value: str | None) -> None:
+    async with _get_pool().acquire() as conn:
+        await conn.execute(
+            """INSERT INTO app_settings (key, value, updated_at)
+               VALUES ($1, $2, NOW())
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()""",
+            key, value,
+        )
+
+
+async def get_setting(key: str) -> Optional[str]:
+    async with _get_pool().acquire() as conn:
+        return await conn.fetchval("SELECT value FROM app_settings WHERE key = $1", key)
+
+
+async def get_setting_updated_at(key: str) -> Optional[str]:
+    async with _get_pool().acquire() as conn:
+        val = await conn.fetchval("SELECT updated_at FROM app_settings WHERE key = $1", key)
+        return val.isoformat() if val else None
+
+
+async def save_auth_state(json_text: str) -> None:
+    """Persist the Google/Playwright auth-state JSON so it survives redeploys."""
+    await set_setting(AUTH_STATE_KEY, json_text)
+
+
+async def load_auth_state() -> Optional[str]:
+    return await get_setting(AUTH_STATE_KEY)
