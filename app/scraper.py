@@ -395,163 +395,194 @@ def _parse_impressions(text: str) -> Optional[int]:
         return None
 
 
+async def _select_single_day_and_read(page, target_date, slug: str) -> Optional[int]:
+    """
+    On an already-loaded Reports page, set the date range to a single day and read
+    'Ad impressions'. Reusable across days within one browser session.
+
+    Mirrors the manual flow: open the date dropdown via its caret → Custom →
+    navigate to the target month → click the day twice (sets Start=End) → Apply.
+    """
+    day_num = str(target_date.day)
+    expected_val = target_date.strftime("%b ") + str(target_date.day) + target_date.strftime(", %Y")  # "Jun 16, 2026"
+    target_header = target_date.strftime("%B %Y")
+
+    # Open the date-range dropdown. The "Date range" input is disabled; the
+    # clickable trigger is the caret element just past its right edge.
+    box = await page.evaluate("""() => {
+        const i = Array.from(document.querySelectorAll('input'))
+            .find(x => x.getAttribute('aria-label') === 'Date range');
+        if (!i) return null;
+        const ir = i.getBoundingClientRect();
+        const caret = Array.from(document.querySelectorAll('*')).find(e => {
+            const r = e.getBoundingClientRect();
+            return r.width > 0 && r.width < 48 && r.height > 0 && r.height < 48 &&
+                   r.x >= ir.right - 5 && r.x < ir.right + 60 &&
+                   Math.abs((r.y + r.height/2) - (ir.y + ir.height/2)) < 20;
+        });
+        const r = caret ? caret.getBoundingClientRect() : null;
+        return {
+            x: Math.round(r ? r.x + r.width/2 : ir.right + 24),
+            y: Math.round((r ? r.y + r.height/2 : ir.y + ir.height/2)),
+        };
+    }""")
+    if not box:
+        logger.warning(f"[{slug}] Date-range control not found.")
+        return None
+    await page.mouse.click(box["x"], box["y"])
+    await page.wait_for_timeout(1500)
+
+    # Choose "Custom".
+    try:
+        await page.get_by_text("Custom", exact=True).first.click(timeout=5000)
+    except Exception:
+        await page.evaluate("""() => {
+            const t = Array.from(document.querySelectorAll('li,[role=option],span,div,button'))
+                .find(e => e.children.length === 0 && (e.textContent||'').trim() === 'Custom');
+            if (t) t.click();
+        }""")
+    await page.wait_for_timeout(2000)
+
+    # The calendar opens on the current month; navigate back to the target month.
+    # Day cells carry an unambiguous data-day-of-month attribute (only real days,
+    # no padding), so there is never a duplicate/adjacent-month day to confuse.
+    navigated = False
+    for _ in range(18):  # safety bound (covers ~17 months back)
+        header = await page.evaluate(r"""() => {
+            const h = Array.from(document.querySelectorAll('*')).find(e =>
+                e.children.length === 0 &&
+                /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$/.test((e.textContent||'').trim()));
+            return h ? h.textContent.trim() : null;
+        }""")
+        if header == target_header:
+            navigated = True
+            break
+        moved = await page.evaluate("""() => {
+            const b = Array.from(document.querySelectorAll('button,[role=button]'))
+                .find(e => (e.getAttribute('aria-label')||'').toLowerCase() === 'previous month');
+            if (b) { b.click(); return true; }
+            return false;
+        }""")
+        if not moved:
+            break
+        await page.wait_for_timeout(600)
+    if not navigated:
+        logger.warning(f"[{slug}] Could not navigate calendar to {target_header}.")
+        return None
+
+    # Click the target day TWICE (sets Start and End to the same date). Target by
+    # data-day-of-month — exact, position-independent.
+    day_xy = await page.evaluate("""(dayNum) => {
+        const e = document.querySelector(`[role=gridcell][data-day-of-month="${dayNum}"]`);
+        if (!e || e.offsetParent === null) return null;
+        const r = e.getBoundingClientRect();
+        return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2)};
+    }""", day_num)
+    if not day_xy:
+        logger.warning(f"[{slug}] Calendar day {day_num} not found in {target_header}.")
+        return None
+    await page.mouse.click(day_xy["x"], day_xy["y"])
+    await page.wait_for_timeout(300)
+    await page.mouse.click(day_xy["x"], day_xy["y"])
+    await page.wait_for_timeout(800)
+
+    # Sanity-check the picker captured our single day before applying.
+    se = await page.evaluate("""() => {
+        const f = Array.from(document.querySelectorAll('input'))
+            .filter(i => ['Start','End'].includes(i.getAttribute('aria-label')));
+        return f.map(i => i.value.trim());
+    }""")
+    if not (se and all(v == expected_val for v in se)):
+        logger.warning(f"[{slug}] Date pick mismatch: got {se}, expected {expected_val!r}.")
+
+    # Apply.
+    try:
+        await page.get_by_text("APPLY", exact=True).first.click(timeout=5000)
+    except Exception:
+        await page.evaluate("""() => {
+            const t = Array.from(document.querySelectorAll('button,span'))
+                .find(e => (e.textContent||'').trim().toUpperCase() === 'APPLY');
+            if (t) t.click();
+        }""")
+
+    # Tiles re-fetch after Apply — wait for them to settle.
+    await _wait_for_text(page, r"ad impressions", timeout_ms=20000)
+    await page.wait_for_timeout(2500)
+
+    impressions = _parse_impressions(await page.evaluate("() => document.body.innerText"))
+    if impressions is None:
+        logger.warning(f"[{slug}] Could not read impressions for {target_date}.")
+    else:
+        logger.info(f"[{slug}] Impressions for {target_date}: {impressions}")
+    return impressions
+
+
+async def _open_reports_page(p, lead_list_url: str, slug: str):
+    """Launch a browser and land on the Reports page. Returns (browser, page) or (browser, None)."""
+    browser = await p.chromium.launch(
+        headless=True, args=["--disable-blink-features=AutomationControlled"],
+    )
+    context = await browser.new_context(
+        storage_state=AUTH_STATE_PATH,
+        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    )
+    page = await context.new_page()
+    reached = await _go_to_reports(page, lead_list_url)
+    if not reached:
+        logger.info(f"[{slug}] Reports load flaked, retrying once...")
+        reached = await _go_to_reports(page, lead_list_url)
+    if not reached:
+        await page.screenshot(path=f"debug_reports_{slug}.png", full_page=True)
+        logger.warning(f"[{slug}] Could not reach Reports page. Saved debug_reports_{slug}.png")
+        return browser, None
+    return browser, page
+
+
 async def scrape_impressions_for_date(client: dict, target_date) -> Optional[int]:
     """
     Read the 'Ad impressions' count for a single day from the LSA Reports page.
-
-    Mirrors the manual flow: open Reports → date dropdown → Custom → click the
-    target day twice (sets both start and end) → Apply → read the impressions tile.
-
-    Returns the impression count, or None if it couldn't be read (logs + saves a
-    debug screenshot so selectors can be tuned against the live page).
     """
     if not await ensure_auth():
         raise RuntimeError("No auth state.")
-
     from datetime import date as _date
     if isinstance(target_date, str):
         target_date = _date.fromisoformat(target_date)
-    day_num = str(target_date.day)
-    expected_val = target_date.strftime("%b ") + str(target_date.day) + target_date.strftime(", %Y")  # "Jun 16, 2026"
-    lead_list_url = client["lead_list_url"]
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True, args=["--disable-blink-features=AutomationControlled"],
-        )
-        context = await browser.new_context(
-            storage_state=AUTH_STATE_PATH,
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        )
-        page = await context.new_page()
+        browser, page = await _open_reports_page(p, client["lead_list_url"], client["slug"])
         try:
-            # The Reports SPA occasionally flakes on first load — retry once.
-            reached = await _go_to_reports(page, lead_list_url)
-            if not reached:
-                logger.info(f"[{client['slug']}] Reports load flaked, retrying once...")
-                reached = await _go_to_reports(page, lead_list_url)
-            if not reached:
-                await page.screenshot(path=f"debug_reports_{client['slug']}.png", full_page=True)
-                logger.warning(f"[{client['slug']}] Could not reach Reports page. "
-                               f"Saved debug_reports_{client['slug']}.png")
+            if page is None:
                 return None
+            return await _select_single_day_and_read(page, target_date, client["slug"])
+        finally:
+            await browser.close()
 
-            # Open the date-range dropdown. The "Date range" input is disabled; the
-            # clickable trigger is the caret element just past its right edge.
-            box = await page.evaluate("""() => {
-                const i = Array.from(document.querySelectorAll('input'))
-                    .find(x => x.getAttribute('aria-label') === 'Date range');
-                if (!i) return null;
-                const ir = i.getBoundingClientRect();
-                // caret = small element immediately right of the input, vertically centred
-                const caret = Array.from(document.querySelectorAll('*')).find(e => {
-                    const r = e.getBoundingClientRect();
-                    return r.width > 0 && r.width < 48 && r.height > 0 && r.height < 48 &&
-                           r.x >= ir.right - 5 && r.x < ir.right + 60 &&
-                           Math.abs((r.y + r.height/2) - (ir.y + ir.height/2)) < 20;
-                });
-                const r = caret ? caret.getBoundingClientRect() : null;
-                return {
-                    x: Math.round(r ? r.x + r.width/2 : ir.right + 24),
-                    y: Math.round((r ? r.y + r.height/2 : ir.y + ir.height/2)),
-                };
-            }""")
-            if not box:
-                logger.warning(f"[{client['slug']}] Date-range control not found.")
-                return None
-            await page.mouse.click(box["x"], box["y"])
-            await page.wait_for_timeout(1500)
 
-            # Choose "Custom".
-            try:
-                await page.get_by_text("Custom", exact=True).first.click(timeout=5000)
-            except Exception:
-                # Fallback: synthetic click
-                await page.evaluate("""() => {
-                    const t = Array.from(document.querySelectorAll('li,[role=option],span,div,button'))
-                        .find(e => e.children.length === 0 && (e.textContent||'').trim() === 'Custom');
-                    if (t) t.click();
-                }""")
-            await page.wait_for_timeout(2000)
+async def scrape_impressions_range(client: dict, dates: list) -> dict:
+    """
+    Read 'Ad impressions' for many days in ONE browser session (efficient backfill).
+    `dates` is a list of date objects or YYYY-MM-DD strings.
+    Returns {date_iso: impressions} for the days that were read successfully.
+    """
+    if not await ensure_auth():
+        raise RuntimeError("No auth state.")
+    from datetime import date as _date
+    norm = [(_date.fromisoformat(d) if isinstance(d, str) else d) for d in dates]
+    results: dict = {}
 
-            # The calendar opens on the current month; navigate back to the target
-            # month if needed. The header reads e.g. "June 2026"; day cells carry an
-            # unambiguous data-day-of-month attribute (only real days, no padding),
-            # so there is never a duplicate or adjacent-month day to confuse.
-            target_header = target_date.strftime("%B %Y")
-            navigated = False
-            for _ in range(12):  # safety bound
-                header = await page.evaluate(r"""() => {
-                    const h = Array.from(document.querySelectorAll('*')).find(e =>
-                        e.children.length === 0 &&
-                        /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$/.test((e.textContent||'').trim()));
-                    return h ? h.textContent.trim() : null;
-                }""")
-                if header == target_header:
-                    navigated = True
-                    break
-                # Click "previous month" (target is always today-2, i.e. past or current).
-                moved = await page.evaluate("""() => {
-                    const b = Array.from(document.querySelectorAll('button,[role=button]'))
-                        .find(e => (e.getAttribute('aria-label')||'').toLowerCase() === 'previous month');
-                    if (b) { b.click(); return true; }
-                    return false;
-                }""")
-                if not moved:
-                    break
-                await page.wait_for_timeout(700)
-            if not navigated:
-                logger.warning(f"[{client['slug']}] Could not navigate calendar to {target_header}.")
-                return None
-
-            # Click the target day TWICE in succession (sets Start and End to the same
-            # date). Target by data-day-of-month — exact, position-independent.
-            day_xy = await page.evaluate("""(dayNum) => {
-                const e = document.querySelector(`[role=gridcell][data-day-of-month="${dayNum}"]`);
-                if (!e || e.offsetParent === null) return null;
-                const r = e.getBoundingClientRect();
-                return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2)};
-            }""", day_num)
-            if not day_xy:
-                logger.warning(f"[{client['slug']}] Calendar day {day_num} not found in {target_header}.")
-                return None
-            await page.mouse.click(day_xy["x"], day_xy["y"])
-            await page.wait_for_timeout(300)
-            await page.mouse.click(day_xy["x"], day_xy["y"])
-            await page.wait_for_timeout(800)
-
-            # Sanity-check the picker captured our single day before applying.
-            se = await page.evaluate("""() => {
-                const f = Array.from(document.querySelectorAll('input'))
-                    .filter(i => ['Start','End'].includes(i.getAttribute('aria-label')));
-                return f.map(i => i.value.trim());
-            }""")
-            if not (se and all(v == expected_val for v in se)):
-                logger.warning(f"[{client['slug']}] Date pick mismatch: got {se}, expected {expected_val!r}.")
-
-            # Apply.
-            try:
-                await page.get_by_text("APPLY", exact=True).first.click(timeout=5000)
-            except Exception:
-                await page.evaluate("""() => {
-                    const t = Array.from(document.querySelectorAll('button,span'))
-                        .find(e => (e.textContent||'').trim().toUpperCase() === 'APPLY');
-                    if (t) t.click();
-                }""")
-
-            # Tiles re-fetch after Apply — wait for them to settle.
-            await _wait_for_text(page, r"ad impressions", timeout_ms=20000)
-            await page.wait_for_timeout(2500)
-
-            body_text = await page.evaluate("() => document.body.innerText")
-            impressions = _parse_impressions(body_text)
-            if impressions is None:
-                await page.screenshot(path=f"debug_reports_{client['slug']}.png", full_page=True)
-                logger.warning(f"[{client['slug']}] Could not read impressions for {target_date}. "
-                               f"Saved debug_reports_{client['slug']}.png")
-            else:
-                logger.info(f"[{client['slug']}] Impressions for {target_date}: {impressions}")
-            return impressions
+    async with async_playwright() as p:
+        browser, page = await _open_reports_page(p, client["lead_list_url"], client["slug"])
+        try:
+            if page is None:
+                return results
+            for d in norm:
+                try:
+                    imp = await _select_single_day_and_read(page, d, client["slug"])
+                    if imp is not None:
+                        results[d.isoformat()] = imp
+                except Exception as e:
+                    logger.warning(f"[{client['slug']}] Impressions read failed for {d}: {e}")
+            return results
         finally:
             await browser.close()
 
