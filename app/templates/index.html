@@ -421,6 +421,10 @@ function renderWeekChart() {
         }
         html += `<div style="font-size:${showDayName?10:11}px;color:${isToday?'var(--tt-slate)':'#94a3b8'};font-weight:${isToday?600:400};white-space:nowrap;">${day.md}</div>`;
       }
+      // Ad-impressions label (only when we have a stored value; hidden in dense 4W/6W views)
+      if (day.impressions != null && !sparseLabels) {
+        html += `<div title="Ad impressions" style="font-size:9px;color:#94a3b8;white-space:nowrap;">Imp: ${day.impressions}</div>`;
+      }
       html += '</div>';
 
       html += '</div>';

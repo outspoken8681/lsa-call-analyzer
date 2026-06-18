@@ -41,6 +41,7 @@ from app.database import (
     get_webhook_deliveries_for_lead,
     get_webhook_delivery,
     get_setting_updated_at,
+    get_daily_metrics,
     AUTH_STATE_KEY,
     init_db,
     load_auth_state,
@@ -48,10 +49,11 @@ from app.database import (
     update_client,
     update_lead,
     update_webhook_delivery,
+    upsert_daily_metric,
     upsert_lead,
 )
 from app.webhook import deliver as webhook_deliver
-from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list, AUTH_STATE_PATH
+from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list, scrape_impressions_for_date, AUTH_STATE_PATH
 from app.r2 import get_audio_bytes as r2_get_audio
 from app.tokens import verify_audio_token
 from app.transcriber import transcribe_audio
@@ -472,6 +474,22 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
         "last_sync_new_leads": daily_total,
     })
 
+    # Capture yesterday's ad-impressions count (a completed day) — best-effort.
+    await _capture_impressions(client, _datetime.now(_EASTERN).date() - timedelta(days=1))
+
+
+async def _capture_impressions(client: dict, target_date) -> None:
+    """Best-effort: scrape and store one day's ad impressions. Never raises."""
+    if not client.get("lead_list_url"):
+        return
+    try:
+        imp = await scrape_impressions_for_date(client, target_date)
+        if imp is not None:
+            await upsert_daily_metric(client["id"], target_date.isoformat(), imp)
+            logger.info(f"[{client['slug']}] Stored impressions {imp} for {target_date}.")
+    except Exception as e:
+        logger.warning(f"[{client['slug']}] Impressions capture failed for {target_date}: {e}")
+
 
 async def _transcribe_and_analyze(client_id: int, lead_id: str):
     lead = await get_lead(client_id, lead_id)
@@ -552,6 +570,10 @@ async def _get_week_chart_data(client_id: int) -> tuple[str, str]:
             "service":      ad.get("service_requested") or "",
         })
 
+    impressions = await get_daily_metrics(
+        client_id, range_start.isoformat(), range_end.isoformat()
+    )
+
     day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     all_weeks = []
     for w in range(6):   # w=0 oldest (5 weeks ago), w=5 current week
@@ -561,10 +583,11 @@ async def _get_week_chart_data(client_id: int) -> tuple[str, str]:
         for i in range(7):
             d = ws + timedelta(days=i)
             days.append({
-                "date":     d.isoformat(),
-                "day":      day_names[i],
-                "md":       f"{d.month}/{d.day}",
-                "is_today": d == today_et,
+                "date":        d.isoformat(),
+                "day":         day_names[i],
+                "md":          f"{d.month}/{d.day}",
+                "is_today":    d == today_et,
+                "impressions": impressions.get(d.isoformat()),
             })
         all_weeks.append({
             "week_start": ws.isoformat(),

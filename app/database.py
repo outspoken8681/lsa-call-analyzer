@@ -119,6 +119,14 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value      TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS daily_metrics (
+    client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    date        TEXT    NOT NULL,         -- YYYY-MM-DD (Eastern business day)
+    impressions INTEGER,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (client_id, date)
+);
 """
 
 # Key under which the Google/Playwright auth state JSON is stored.
@@ -412,3 +420,28 @@ async def save_auth_state(json_text: str) -> None:
 
 async def load_auth_state() -> Optional[str]:
     return await get_setting(AUTH_STATE_KEY)
+
+
+# ── Daily metrics (ad impressions per day) ────────────────────────────────────
+
+async def upsert_daily_metric(client_id: int, date: str, impressions: Optional[int]) -> None:
+    async with _get_pool().acquire() as conn:
+        await conn.execute(
+            """INSERT INTO daily_metrics (client_id, date, impressions, updated_at)
+               VALUES ($1, $2, $3, NOW())
+               ON CONFLICT (client_id, date)
+               DO UPDATE SET impressions = EXCLUDED.impressions, updated_at = NOW()""",
+            client_id, date, impressions,
+        )
+
+
+async def get_daily_metrics(client_id: int, start: str, end: str) -> dict[str, int]:
+    """Return {date: impressions} for client between start..end (inclusive, YYYY-MM-DD)."""
+    async with _get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT date, impressions FROM daily_metrics
+               WHERE client_id = $1 AND date >= $2 AND date <= $3
+                 AND impressions IS NOT NULL""",
+            client_id, start, end,
+        )
+        return {r["date"]: r["impressions"] for r in rows}
