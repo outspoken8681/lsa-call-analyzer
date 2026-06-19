@@ -486,14 +486,18 @@ async def _select_single_day_and_read(page, target_date, slug: str) -> Optional[
     await page.mouse.click(day_xy["x"], day_xy["y"])
     await page.wait_for_timeout(800)
 
-    # Sanity-check the picker captured our single day before applying.
+    # Sanity-check the picker captured our single day BEFORE applying. If it
+    # didn't, fail closed (return None) rather than applying a stale/wide range
+    # and reporting a wildly wrong total — a missing day beats a wrong number.
     se = await page.evaluate("""() => {
         const f = Array.from(document.querySelectorAll('input'))
             .filter(i => ['Start','End'].includes(i.getAttribute('aria-label')));
         return f.map(i => i.value.trim());
     }""")
-    if not (se and all(v == expected_val for v in se)):
-        logger.warning(f"[{slug}] Date pick mismatch: got {se}, expected {expected_val!r}.")
+    if not (se and len(se) == 2 and all(v == expected_val for v in se)):
+        logger.warning(f"[{slug}] Date pick mismatch for {target_date}: got {se}, "
+                       f"expected both == {expected_val!r}. Skipping (no value stored).")
+        return None
 
     # Apply.
     try:
@@ -508,6 +512,18 @@ async def _select_single_day_and_read(page, target_date, slug: str) -> Optional[
     # Tiles re-fetch after Apply — wait for them to settle.
     await _wait_for_text(page, r"ad impressions", timeout_ms=20000)
     await page.wait_for_timeout(2500)
+
+    # Confirm the applied range is exactly our single day before trusting the number.
+    applied = await page.evaluate("""() => {
+        const i = Array.from(document.querySelectorAll('input'))
+            .find(x => x.getAttribute('aria-label') === 'Date range');
+        return i ? i.value.trim() : null;
+    }""")
+    expected_range = f"{expected_val} - {expected_val}"
+    if not applied or applied.replace("  ", " ").strip() != expected_range:
+        logger.warning(f"[{slug}] Applied range not single-day for {target_date}: "
+                       f"got {applied!r}, expected {expected_range!r}. Skipping.")
+        return None
 
     impressions = _parse_impressions(await page.evaluate("() => document.body.innerText"))
     if impressions is None:
