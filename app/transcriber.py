@@ -112,17 +112,16 @@ async def transcribe_audio(audio_path: str, business_type: str | None = None) ->
     logger.info(f"Transcribing {path.name} ({file_size_mb:.2f} MB) [{biz}]...")
 
     try:
+        # NOTE: we deliberately do NOT pass a `prompt`. Whisper can hallucinate by
+        # echoing/looping the prompt text into the transcript on quiet or repetitive
+        # audio (observed: a real 4-min call reduced to the prompt sentence repeated).
+        # The slight vocabulary bias a prompt gives is not worth that failure mode.
         with open(path, "rb") as f:
             response = await client.audio.transcriptions.create(
                 model="whisper-1",
                 file=f,
                 response_format="verbose_json",
                 timestamp_granularities=["segment"],
-                prompt=(
-                    f"This is a phone call to a {biz}. "
-                    "The caller is a potential customer describing the service they need, "
-                    "and may mention their name, address, phone number, and scheduling."
-                ),
             )
 
         raw_transcript = response.text.strip()
