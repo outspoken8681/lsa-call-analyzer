@@ -98,6 +98,8 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_sync_new_leads INTEGER;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_url TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS business_type TEXT;
+-- LSA advertiser ID as shown in Google's account picker (NOT the cid in the URL).
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS google_account_id TEXT;
 -- Rolling 30-day Reports snapshot (spend + charged leads), refreshed on sync.
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_spend REAL;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_leads INTEGER;

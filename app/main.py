@@ -782,6 +782,7 @@ async def admin_create_client(
     lead_list_url: str = Form(""),
     portal_password: str = Form(""),
     business_type: str = Form(""),
+    google_account_id: str = Form(""),
     _csrf: None = Depends(_csrf_form),
 ):
     if not _is_admin(request):
@@ -793,6 +794,8 @@ async def admin_create_client(
         extra["portal_password_plain"] = portal_password
     if business_type.strip():
         extra["business_type"] = business_type.strip()
+    if google_account_id.strip():
+        extra["google_account_id"] = google_account_id.strip()
     if extra:
         await update_client(client["id"], extra)
     return RedirectResponse("/admin/clients", status_code=302)
@@ -809,16 +812,18 @@ async def admin_update_client(
     webhook_url: str = Form(""),
     webhook_secret: str = Form(""),
     business_type: str = Form(""),
+    google_account_id: str = Form(""),
     _csrf: None = Depends(_csrf_form),
 ):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
     updates: dict = {
-        "name":          name,
-        "slug":          slug.lower().strip(),
-        "lead_list_url": lead_list_url or None,
-        "webhook_url":   webhook_url.strip() or None,
-        "business_type": business_type.strip() or None,
+        "name":               name,
+        "slug":               slug.lower().strip(),
+        "lead_list_url":      lead_list_url or None,
+        "webhook_url":        webhook_url.strip() or None,
+        "business_type":      business_type.strip() or None,
+        "google_account_id":  google_account_id.strip() or None,
     }
     if webhook_secret.strip():
         updates["webhook_secret"] = webhook_secret.strip()
