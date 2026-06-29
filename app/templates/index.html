@@ -108,7 +108,28 @@
 </div>
 {% endif %}
 
-{% if not leads %}
+{% if not leads and (search_query or filter_answered or filter_charged) %}
+{# No results for an active search/filter — keep the search box so they can adjust. #}
+<form id="filter-form" method="get" action="{{ lead_base }}">
+  <input type="hidden" name="page" value="1">
+  <div class="mb-3" style="max-width:420px;">
+    <div class="input-group input-group-sm">
+      <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+      <input type="search" name="q" value="{{ search_query }}" class="form-control"
+             placeholder="Search name, phone, location, transcript…" autocomplete="off">
+      <button type="submit" class="btn btn-outline-secondary">Search</button>
+    </div>
+  </div>
+</form>
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-search display-4 d-block mb-3"></i>
+    <p class="mb-2 fs-5">No leads match
+      {% if search_query %}“{{ search_query }}”{% endif %}{% if (filter_answered or filter_charged) %}{% if search_query %} with{% endif %} the selected filters{% endif %}.</p>
+    <a href="{{ lead_base }}" class="btn btn-sm btn-outline-secondary">Clear search &amp; filters</a>
+  </div>
+</div>
+{% elif not leads %}
 <div class="card border-0 shadow-sm">
   <div class="card-body text-center py-5 text-muted">
     <i class="bi bi-telephone-x display-4 d-block mb-3"></i>
@@ -125,8 +146,31 @@
 {% else %}
 
 {# ── Filter bar ────────────────────────────────────────────────────────────── #}
+{# Shared query string of active filters + search, reused by pagination links.
+   Uses a namespace because {% set %} inside a {% for %} doesn't persist otherwise. #}
+{% set qns = namespace(qs='') %}
+{% for v in filter_answered %}{% set qns.qs = qns.qs ~ '&answered=' ~ v %}{% endfor %}
+{% for v in filter_charged %}{% set qns.qs = qns.qs ~ '&charged=' ~ v %}{% endfor %}
+{% if search_query %}{% set qns.qs = qns.qs ~ '&q=' ~ (search_query | urlencode) %}{% endif %}
+{% set filter_qs = qns.qs %}
 <form id="filter-form" method="get" action="{{ lead_base }}">
   <input type="hidden" name="page" value="1">
+
+  <div class="mb-3" style="max-width:420px;">
+    <div class="input-group input-group-sm">
+      <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+      <input type="search" name="q" value="{{ search_query }}" class="form-control"
+             placeholder="Search name, phone, location, transcript…" autocomplete="off">
+      <button type="submit" class="btn btn-outline-secondary">Search</button>
+      {% if search_query %}
+      {% set ns = namespace(qs='') %}
+      {% for v in filter_answered %}{% set ns.qs = ns.qs ~ '&answered=' ~ v %}{% endfor %}
+      {% for v in filter_charged %}{% set ns.qs = ns.qs ~ '&charged=' ~ v %}{% endfor %}
+      <a href="{{ lead_base }}?page=1{{ ns.qs }}" class="btn btn-outline-secondary" title="Clear search"><i class="bi bi-x-lg"></i></a>
+      {% endif %}
+    </div>
+  </div>
+
   <div class="d-flex align-items-center gap-3 flex-wrap mb-3">
     <span class="text-muted small fw-medium">Filter:</span>
 
@@ -277,9 +321,6 @@
 </div>
 
 {% if total_pages > 1 %}
-{% set filter_qs = '' %}
-{% for v in filter_answered %}{% set filter_qs = filter_qs ~ '&answered=' ~ v %}{% endfor %}
-{% for v in filter_charged %}{% set filter_qs = filter_qs ~ '&charged=' ~ v %}{% endfor %}
 <nav class="mt-3 d-flex justify-content-center">
   <ul class="pagination">
     {% for p in range(1, total_pages + 1) %}

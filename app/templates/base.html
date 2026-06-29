@@ -164,14 +164,19 @@
           <button class="btn btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
             <i class="bi bi-building me-1"></i>
             {{ current_client.name if current_client else 'Select Client' }}
+            {% if current_client %}{% set cid = current_client.lead_list_url | google_account_id %}{% if cid %}
+            <span class="opacity-75 ms-1" style="font-size:11px;font-weight:400;">#{{ cid }}</span>
+            {% endif %}{% endif %}
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
             {% for c in all_clients %}
             <li>
               <form method="post" action="/admin/clients/{{ c.id }}/select" class="m-0">
                 <input type="hidden" name="csrf_token">
-                <button type="submit" class="dropdown-item {% if current_client and current_client.id == c.id %}active{% endif %}">
-                  {{ c.name }}
+                <button type="submit" class="dropdown-item d-flex justify-content-between align-items-center gap-3 {% if current_client and current_client.id == c.id %}active{% endif %}">
+                  <span>{{ c.name }}</span>
+                  {% set cid = c.lead_list_url | google_account_id %}
+                  {% if cid %}<span class="text-muted small font-monospace">#{{ cid }}</span>{% endif %}
                 </button>
               </form>
             </li>

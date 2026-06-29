@@ -237,7 +237,8 @@ async def get_lead(client_id: int, lead_id: str) -> Optional[dict]:
 
 def _build_lead_where(client_id: int,
                        filter_answered: list[str] | None,
-                       filter_charged: list[str] | None) -> tuple[str, list]:
+                       filter_charged: list[str] | None,
+                       search: str | None = None) -> tuple[str, list]:
     """Build a WHERE clause + params list for lead queries with optional filters."""
     conditions = ["client_id = $1"]
     params: list = [client_id]
@@ -245,6 +246,12 @@ def _build_lead_where(client_id: int,
     def _p(val):
         params.append(val)
         return f"${len(params)}"
+
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        cols = ("caller_name", "contact_name", "caller_phone", "location",
+                "job_type", "transcript", "call_summary", "qualification_reason", "id")
+        conditions.append("(" + " OR ".join(f"{c} ILIKE {_p(like)}" for c in cols) + ")")
 
     if filter_answered:
         parts = []
@@ -277,8 +284,9 @@ def _build_lead_where(client_id: int,
 
 async def get_all_leads(client_id: int, limit: int = 100, offset: int = 0,
                         filter_answered: list[str] | None = None,
-                        filter_charged: list[str] | None = None) -> list[dict]:
-    where, params = _build_lead_where(client_id, filter_answered, filter_charged)
+                        filter_charged: list[str] | None = None,
+                        search: str | None = None) -> list[dict]:
+    where, params = _build_lead_where(client_id, filter_answered, filter_charged, search)
     lim_p = f"${len(params)+1}"
     off_p = f"${len(params)+2}"
     async with _get_pool().acquire() as conn:
@@ -296,8 +304,9 @@ async def get_all_leads(client_id: int, limit: int = 100, offset: int = 0,
 
 async def get_leads_count(client_id: int,
                           filter_answered: list[str] | None = None,
-                          filter_charged: list[str] | None = None) -> int:
-    where, params = _build_lead_where(client_id, filter_answered, filter_charged)
+                          filter_charged: list[str] | None = None,
+                          search: str | None = None) -> int:
+    where, params = _build_lead_where(client_id, filter_answered, filter_charged, search)
     async with _get_pool().acquire() as conn:
         val = await conn.fetchval(
             f"SELECT COUNT(*) FROM leads WHERE {where}", *params

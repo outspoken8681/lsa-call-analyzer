@@ -297,6 +297,18 @@ def _fmt_call_date(date_str: str | None) -> str:
 templates.env.filters["fmt_call_date"] = _fmt_call_date
 
 
+def _google_account_id(lead_list_url: str | None) -> str | None:
+    """Extract the Google customer ID (cid) from a client's lead list URL."""
+    if not lead_list_url:
+        return None
+    from urllib.parse import parse_qs, urlparse
+    cid = (parse_qs(urlparse(lead_list_url).query).get("cid") or [None])[0]
+    return cid
+
+
+templates.env.filters["google_account_id"] = _google_account_id
+
+
 # ── Shared template context helpers ──────────────────────────────────────────
 
 async def _admin_context(request: Request) -> dict:
@@ -881,16 +893,17 @@ async def dashboard(request: Request, page: int = 1):
     # Parse multi-value filter params from query string
     filter_answered = request.query_params.getlist("answered") or None
     filter_charged = request.query_params.getlist("charged") or None
+    search = (request.query_params.get("q") or "").strip() or None
 
     page_size = 25
     offset = (page - 1) * page_size
     leads = _enrich_leads(await get_all_leads(
         client_id, limit=page_size, offset=offset,
-        filter_answered=filter_answered, filter_charged=filter_charged,
+        filter_answered=filter_answered, filter_charged=filter_charged, search=search,
     ))
     total = await get_leads_count(client_id,
                                   filter_answered=filter_answered,
-                                  filter_charged=filter_charged)
+                                  filter_charged=filter_charged, search=search)
     is_authenticated = await ensure_auth()
     chart_leads_json, chart_days_json = await _get_week_chart_data(client_id)
     failed_webhooks = await get_failed_webhook_count(client_id)
@@ -905,6 +918,7 @@ async def dashboard(request: Request, page: int = 1):
         "is_authenticated": is_authenticated,
         "filter_answered": filter_answered or [],
         "filter_charged": filter_charged or [],
+        "search_query": search or "",
         "weekly_chart_leads_json": chart_leads_json,
         "weekly_chart_weeks_json": chart_days_json,
         "failed_webhook_count": failed_webhooks,
@@ -1251,16 +1265,17 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
 
     filter_answered = request.query_params.getlist("answered") or None
     filter_charged = request.query_params.getlist("charged") or None
+    search = (request.query_params.get("q") or "").strip() or None
 
     page_size = 25
     offset = (page - 1) * page_size
     leads = _enrich_leads(await get_all_leads(
         client["id"], limit=page_size, offset=offset,
-        filter_answered=filter_answered, filter_charged=filter_charged,
+        filter_answered=filter_answered, filter_charged=filter_charged, search=search,
     ))
     total = await get_leads_count(client["id"],
                                   filter_answered=filter_answered,
-                                  filter_charged=filter_charged)
+                                  filter_charged=filter_charged, search=search)
 
     chart_leads_json, chart_days_json = await _get_week_chart_data(client["id"])
 
@@ -1277,6 +1292,7 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
         "all_clients": [],
         "filter_answered": filter_answered or [],
         "filter_charged": filter_charged or [],
+        "search_query": search or "",
         "weekly_chart_leads_json": chart_leads_json,
         "weekly_chart_weeks_json": chart_days_json,
     })
