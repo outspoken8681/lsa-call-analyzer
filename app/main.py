@@ -53,7 +53,7 @@ from app.database import (
     upsert_lead,
 )
 from app.webhook import deliver as webhook_deliver
-from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list, scrape_impressions_for_date, AUTH_STATE_PATH
+from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list, scrape_impressions_for_date, scrape_account_summary, AUTH_STATE_PATH
 from app.r2 import get_audio_bytes as r2_get_audio
 from app.tokens import verify_audio_token
 from app.transcriber import transcribe_audio
@@ -488,6 +488,8 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
 
     # Capture yesterday's ad-impressions count (a completed day) — best-effort.
     await _capture_impressions(client, _datetime.now(_EASTERN).date() - timedelta(days=1))
+    # Refresh the rolling 30-day spend / charged-leads snapshot — best-effort.
+    await _capture_account_summary(client)
 
 
 async def _capture_impressions(client: dict, target_date) -> None:
@@ -501,6 +503,24 @@ async def _capture_impressions(client: dict, target_date) -> None:
             logger.info(f"[{client['slug']}] Stored impressions {imp} for {target_date}.")
     except Exception as e:
         logger.warning(f"[{client['slug']}] Impressions capture failed for {target_date}: {e}")
+
+
+async def _capture_account_summary(client: dict) -> None:
+    """Best-effort: refresh the rolling 30-day spend + charged-leads totals. Never raises."""
+    if not client.get("lead_list_url"):
+        return
+    try:
+        summary = await scrape_account_summary(client)
+        if summary and (summary.get("spend") is not None or summary.get("leads") is not None):
+            await update_client(client["id"], {
+                "r30_spend": summary.get("spend"),
+                "r30_leads": summary.get("leads"),
+                "r30_updated_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            logger.info(f"[{client['slug']}] Stored 30-day summary: "
+                        f"spend={summary.get('spend')} leads={summary.get('leads')}.")
+    except Exception as e:
+        logger.warning(f"[{client['slug']}] Account-summary capture failed: {e}")
 
 
 async def _transcribe_and_analyze(client_id: int, lead_id: str):

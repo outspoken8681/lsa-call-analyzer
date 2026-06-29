@@ -98,6 +98,10 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_sync_new_leads INTEGER;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_url TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS business_type TEXT;
+-- Rolling 30-day Reports snapshot (spend + charged leads), refreshed on sync.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_spend REAL;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_leads INTEGER;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_updated_at TEXT;
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id              SERIAL PRIMARY KEY,

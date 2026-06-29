@@ -395,6 +395,38 @@ def _parse_impressions(text: str) -> Optional[int]:
         return None
 
 
+def _parse_total_spend(text: str) -> Optional[float]:
+    """First dollar amount after the 'Total lead spend' label (the headline total)."""
+    i = text.find("Total lead spend")
+    if i == -1:
+        return None
+    m = re.search(r'\$([\d,]+(?:\.\d{2})?)', text[i:i + 300])
+    if not m:
+        return None
+    try:
+        return round(float(m.group(1).replace(",", "")), 2)
+    except ValueError:
+        return None
+
+
+def _parse_charged_leads(text: str) -> Optional[int]:
+    """First standalone integer after the 'Charged leads' label (the headline count).
+
+    The label is followed by filter words (All / Category / Direct Business Search)
+    then the count on its own line, so we take the first integer that stands alone.
+    """
+    i = text.find("Charged leads")
+    if i == -1:
+        return None
+    m = re.search(r'(?:^|\n)\s*([\d,]+)\s*(?:\n|$)', text[i:i + 300])
+    if not m:
+        return None
+    try:
+        return int(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
 async def _select_single_day_and_read(page, target_date, slug: str) -> Optional[int]:
     """
     On an already-loaded Reports page, set the date range to a single day and read
@@ -599,6 +631,35 @@ async def scrape_impressions_range(client: dict, dates: list) -> dict:
                 except Exception as e:
                     logger.warning(f"[{client['slug']}] Impressions read failed for {d}: {e}")
             return results
+        finally:
+            await browser.close()
+
+
+async def scrape_account_summary(client: dict) -> Optional[dict]:
+    """
+    Read the Reports page's default 30-day headline numbers — total lead spend
+    and charged-lead count. (The page defaults to the past 30 days, so no date
+    selection is needed.) Returns {"spend": float, "leads": int} or None.
+    """
+    if not await ensure_auth():
+        raise RuntimeError("No auth state.")
+    async with async_playwright() as p:
+        browser, page = await _open_reports_page(p, client["lead_list_url"], client["slug"])
+        try:
+            if page is None:
+                return None
+            # Ensure the tiles have rendered.
+            await _wait_for_text(page, r"total lead spend", timeout_ms=20000)
+            await page.wait_for_timeout(1500)
+            text = await page.evaluate("() => document.body.innerText")
+            spend = _parse_total_spend(text)
+            leads = _parse_charged_leads(text)
+            if spend is None and leads is None:
+                await page.screenshot(path=f"debug_reports_{client['slug']}.png", full_page=True)
+                logger.warning(f"[{client['slug']}] Could not read account summary.")
+                return None
+            logger.info(f"[{client['slug']}] 30-day summary: spend={spend} leads={leads}")
+            return {"spend": spend, "leads": leads}
         finally:
             await browser.close()
 
