@@ -400,7 +400,11 @@ def _parse_total_spend(text: str) -> Optional[float]:
     i = text.find("Total lead spend")
     if i == -1:
         return None
-    m = re.search(r'\$([\d,]+(?:\.\d{2})?)', text[i:i + 300])
+    window = text[i:i + 300]
+    # Zero-spend state: Google shows "You don't have any charges." with no figure.
+    if "don't have any charges" in window or "do not have any charges" in window:
+        return 0.0
+    m = re.search(r'\$([\d,]+(?:\.\d{2})?)', window)
     if not m:
         return None
     try:
@@ -418,7 +422,12 @@ def _parse_charged_leads(text: str) -> Optional[int]:
     i = text.find("Charged leads")
     if i == -1:
         return None
-    m = re.search(r'(?:^|\n)\s*([\d,]+)\s*(?:\n|$)', text[i:i + 300])
+    window = text[i:i + 300]
+    # Zero state: "You don't have any charged leads." — no number is shown, and
+    # without this guard we'd wrongly grab the next number on the page.
+    if "don't have any charged" in window or "do not have any charged" in window:
+        return 0
+    m = re.search(r'(?:^|\n)\s*([\d,]+)\s*(?:\n|$)', window)
     if not m:
         return None
     try:
