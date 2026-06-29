@@ -1028,34 +1028,93 @@ async def scrape_lead_audio(client: dict, lead_id: str, lead_url: str) -> dict:
             return {"scrape_status": "failed", "error_message": f"Download failed: HTTP {response.status}"}
 
 
+_MSG_NOISE = {
+    "loading…", "loading", "loading audio", "show number", "archive",
+    "mark booked", "send", "fix it", "",
+}
+# A message's timestamp line takes several forms depending on age/recency:
+#   "7:10 PM"                 clock time
+#   "5/13/26"                 numeric date
+#   "May 13, 2026 at 10:28 AM"  long date
+#   "Yesterday 11:20 AM" / "Today 9:00 AM" / "Mon 3:14 PM"  relative
+_MSG_TIME_RE = re.compile(
+    r'^(?:'
+    r'\d{1,2}:\d{2}\s*[AP]M'
+    r'|\d{1,2}/\d{1,2}/\d{2,4}'
+    r'|[A-Z][a-z]{2,8}\s+\d{1,2},\s*\d{4}(?:\s+at\s+\d{1,2}:\d{2}\s*[AP]M)?'
+    r'|(?:Yesterday|Today|Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}:\d{2}\s*[AP]M'
+    r')$',
+    re.I,
+)
+
+
+def _parse_message_transcript(raw: str) -> Optional[str]:
+    """
+    Turn the raw LSA message-lead page text into a clean conversation transcript:
+        Sender (time): message
+    The thread lives between the "Conversation" heading and the "Reply to customer
+    here" composer. Each message is a sender line, a time line (e.g. "7:10 PM"),
+    then one or more body lines. Avatar initials and "Loading…"/"Loading audio"
+    placeholders are dropped. Returns None if no structured messages are found.
+    """
+    if not raw:
+        return None
+    lo = raw.find("Conversation")
+    hi = raw.find("Reply to customer here")
+    body = raw[lo + len("Conversation"): (hi if hi != -1 else None)] if lo != -1 else raw
+
+    lines = []
+    for ln in body.splitlines():
+        s = ln.strip()
+        if not s or s.lower() in _MSG_NOISE:
+            continue
+        if re.fullmatch(r'[A-Za-z]', s):   # single-letter avatar initial
+            continue
+        lines.append(s)
+
+    messages = []
+    i = 0
+    while i < len(lines):
+        # A message header = a sender line immediately followed by a time line.
+        if i + 1 < len(lines) and _MSG_TIME_RE.match(lines[i + 1]):
+            sender, time = lines[i], lines[i + 1]
+            i += 2
+            parts = []
+            while i < len(lines) and not (i + 1 < len(lines) and _MSG_TIME_RE.match(lines[i + 1])):
+                parts.append(lines[i])
+                i += 1
+            text = " ".join(parts).strip()
+            text = re.sub(r'\s*\[Notes from LSA:[^\]]*\]', '', text).strip()
+            if text:
+                messages.append(f"{sender} ({time}): {text}")
+        else:
+            i += 1
+
+    return "\n".join(messages) if messages else None
+
+
 async def _extract_message_content(page: Page) -> Optional[str]:
     """
-    Extract the full message conversation from an LSA message lead detail page.
-    Returns a formatted string with all messages, or None if extraction fails.
+    Extract the message conversation from an LSA message-lead detail page and
+    format it as a clean "Sender (time): message" transcript.
     """
     try:
-        content = await page.evaluate("""() => {
-            // Google LSA message threads are often in divs with "message" in the class.
-            // Try several selectors, fall back to full page text.
-            const selectors = [
-                '[class*="message"]', '[class*="Message"]',
-                '[class*="conversation"]', '[class*="thread"]',
-                '[class*="chat"]',
-            ];
-            for (const sel of selectors) {
-                const els = Array.from(document.querySelectorAll(sel));
-                const texts = els.map(el => el.innerText.trim()).filter(t => t.length > 5);
-                if (texts.length >= 2) {
-                    return texts.join('\\n---\\n');
-                }
-            }
-            // Fallback: full page text (the AI will extract what's relevant)
-            return document.body.innerText;
-        }""")
-        return content.strip() if content else None
+        raw = await page.evaluate("() => document.body.innerText")
     except Exception as e:
         logger.debug(f"Message content extraction error: {e}")
-    return None
+        return None
+    if not raw:
+        return None
+    parsed = _parse_message_transcript(raw)
+    if parsed:
+        return parsed
+    # Fallback: trimmed conversation window (better than the whole page) so the
+    # AI still has something usable if the structured parse misses.
+    lo = raw.find("Conversation")
+    hi = raw.find("Reply to customer here")
+    if lo != -1:
+        return raw[lo + len("Conversation"): (hi if hi != -1 else None)].strip() or None
+    return raw.strip() or None
 
 
 def _normalize_call_date(date_str: str) -> str:
