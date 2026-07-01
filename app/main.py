@@ -577,8 +577,8 @@ def _parse_call_date(date_str: str | None):
     return None
 
 
-async def _get_week_chart_data(client_id: int) -> tuple[str, str]:
-    """Return (chart_leads_json, weeks_json) covering the past 6 Sun–Sat weeks (Eastern)."""
+async def _get_week_chart_data(client_id: int) -> tuple[str, str, bool]:
+    """Return (chart_leads_json, weeks_json, has_impressions) for the past 6 Sun–Sat weeks."""
     today_et = _datetime.now(_EASTERN).date()
     days_since_sunday = (today_et.weekday() + 1) % 7
     week_start  = today_et - timedelta(days=days_since_sunday)   # Sunday of current week
@@ -627,7 +627,8 @@ async def _get_week_chart_data(client_id: int) -> tuple[str, str]:
             "days":       days,
         })
 
-    return json.dumps(chart_leads), json.dumps(all_weeks)
+    has_impressions = any(v is not None for v in impressions.values())
+    return json.dumps(chart_leads), json.dumps(all_weeks), has_impressions
 
 
 # ── Webhook helpers ───────────────────────────────────────────────────────────
@@ -930,7 +931,7 @@ async def dashboard(request: Request, page: int = 1):
                                   filter_answered=filter_answered,
                                   filter_charged=filter_charged, search=search)
     is_authenticated = await ensure_auth()
-    chart_leads_json, chart_days_json = await _get_week_chart_data(client_id)
+    chart_leads_json, chart_days_json, has_impressions = await _get_week_chart_data(client_id)
     failed_webhooks = await get_failed_webhook_count(client_id)
 
     return templates.TemplateResponse(request, "index.html", {
@@ -946,6 +947,7 @@ async def dashboard(request: Request, page: int = 1):
         "search_query": search or "",
         "weekly_chart_leads_json": chart_leads_json,
         "weekly_chart_weeks_json": chart_days_json,
+        "chart_has_impressions": has_impressions,
         "failed_webhook_count": failed_webhooks,
     })
 
@@ -1302,7 +1304,7 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
                                   filter_answered=filter_answered,
                                   filter_charged=filter_charged, search=search)
 
-    chart_leads_json, chart_days_json = await _get_week_chart_data(client["id"])
+    chart_leads_json, chart_days_json, has_impressions = await _get_week_chart_data(client["id"])
 
     return templates.TemplateResponse(request, "index.html", {
         "leads": leads,
@@ -1320,6 +1322,7 @@ async def portal_leads(request: Request, slug: str, page: int = 1):
         "search_query": search or "",
         "weekly_chart_leads_json": chart_leads_json,
         "weekly_chart_weeks_json": chart_days_json,
+        "chart_has_impressions": has_impressions,
     })
 
 

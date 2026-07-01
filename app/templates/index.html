@@ -81,7 +81,9 @@
 {% endif %}
 
 {# ── Weekly lead chart ────────────────────────────────────────────────────────── #}
-{% if total > 0 %}
+{# Show the chart when there are leads OR when we have ad-impression data to display
+   (accounts with impressions but zero charged leads still want the daily graph). #}
+{% if total > 0 or chart_has_impressions %}
 <div class="card border-0 shadow-sm mb-3">
   <div class="card-body py-2 px-3">
 
@@ -152,6 +154,13 @@
     <p class="mb-2 fs-5">No leads match
       {% if search_query %}“{{ search_query }}”{% endif %}{% if (filter_answered or filter_charged) %}{% if search_query %} with{% endif %} the selected filters{% endif %}.</p>
     <a href="{{ lead_base }}" class="btn btn-sm btn-outline-secondary">Clear search &amp; filters</a>
+  </div>
+</div>
+{% elif not leads and chart_has_impressions %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-4 text-muted">
+    <i class="bi bi-bar-chart-line display-6 d-block mb-2"></i>
+    <p class="mb-0">No charged leads in this period. Ad impression data is shown above.</p>
   </div>
 </div>
 {% elif not leads %}
