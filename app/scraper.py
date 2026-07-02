@@ -550,9 +550,18 @@ async def _select_single_day_and_read(page, target_date, slug: str) -> Optional[
             if (t) t.click();
         }""")
 
-    # Tiles re-fetch after Apply — wait for them to settle.
-    await _wait_for_text(page, r"ad impressions", timeout_ms=20000)
-    await page.wait_for_timeout(2500)
+    # Wait for the page to actually re-render for the NEW range. "Ad impressions"
+    # text is already present from the previous view, so waiting on it races the
+    # re-fetch and can read a stale (e.g. 30-day) figure. The chart heading
+    # "Charged leads received from <start> - <end>" only updates once the new
+    # range's data has loaded — wait for that, and fail closed if it never comes.
+    heading_re = (r"received from\s+" + re.escape(expected_val)
+                  + r"\s*[-–]\s*" + re.escape(expected_val))
+    if not await _wait_for_text(page, heading_re, timeout_ms=30000):
+        logger.warning(f"[{slug}] Report never re-rendered for {target_date} "
+                       f"(heading not found). Skipping (no value stored).")
+        return None
+    await page.wait_for_timeout(1500)  # let the tiles finish painting
 
     # Confirm the applied range is exactly our single day before trusting the number.
     applied = await page.evaluate("""() => {
