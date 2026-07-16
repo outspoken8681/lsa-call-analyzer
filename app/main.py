@@ -277,6 +277,7 @@ def _fmt_call_date(date_str: str | None) -> str:
         "%Y-%m-%dT%H:%M:%S.%f",
         "%m/%d/%y %I:%M %p",
         "%B %d, %Y %I:%M %p",  # after stripping " at "
+        "%b %d, %Y %I:%M %p",  # abbreviated month (detail-page fallback)
     ]
     dt = None
     for fmt in formats:
@@ -569,7 +570,7 @@ def _parse_call_date(date_str: str | None):
     if not date_str:
         return None
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",
-                "%m/%d/%y %I:%M %p", "%B %d, %Y %I:%M %p"):
+                "%m/%d/%y %I:%M %p", "%B %d, %Y %I:%M %p", "%b %d, %Y %I:%M %p"):
         try:
             return _datetime.strptime(date_str.replace(" at ", " "), fmt).date()
         except ValueError:

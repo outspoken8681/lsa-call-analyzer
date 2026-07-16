@@ -34,6 +34,20 @@ def _clean_charge_status(text: str | None) -> str | None:
     return re.sub(r'\s+\w+_\w+', '', text).strip() or text
 
 
+def _clean_cell_text(text: str | None) -> str | None:
+    """
+    Sanitize a lead-table cell: strip Material icon ligature names that Google
+    renders as literal text (e.g. the help icon next to a phone number comes
+    through as 'help_outline'), and collapse embedded newlines/whitespace.
+    """
+    if not text:
+        return text
+    # No leading \b: icon names can be glued to preceding digits ("21498help_outline").
+    cleaned = re.sub(r'[a-z][a-z0-9]*_[a-z0-9_]+\b', '', text)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned or None
+
+
 async def _safe_go_to_list(go_to_list, lead_id: str) -> None:
     """
     Return to the lead-list table between leads. Google occasionally navigates
@@ -305,7 +319,7 @@ async def get_lead_list(client: dict) -> list[dict]:
             continue
         raw_type = (cells[4] if len(cells) > 4 else "").strip().lower()
         lead_type = "message" if raw_type == "message" else "phone"
-        cell0 = (cells[0] or "").strip() if cells else ""
+        cell0 = _clean_cell_text((cells[0] or "").strip()) or "" if cells else ""
         # For message leads cells[0] is sometimes a name, sometimes a phone number.
         # Distinguish by presence of digits: digits → phone, letters only → name.
         if lead_type == "message" and cell0 and not any(c.isdigit() for c in cell0):
@@ -777,7 +791,7 @@ async def scrape_all_leads(client: dict, max_leads: int = 50, skip_message_ids: 
                 continue
             raw_type = (cells[4] if len(cells) > 4 else "").strip().lower()
             lead_type = "message" if raw_type == "message" else "phone"
-            cell0 = (cells[0] or "").strip() if cells else ""
+            cell0 = _clean_cell_text((cells[0] or "").strip()) or "" if cells else ""
             # For message leads cells[0] is sometimes a name, sometimes a phone number.
             # Distinguish by presence of digits: digits → phone, letters only → name.
             if lead_type == "message" and cell0 and not any(c.isdigit() for c in cell0):
@@ -1208,7 +1222,8 @@ def _normalize_call_date(date_str: str) -> str:
         return date_str
     candidates = [
         (date_str, "%m/%d/%y %I:%M %p"),
-        (date_str.replace(" at ", " "), "%B %d, %Y %I:%M %p"),
+        (date_str.replace(" at ", " "), "%B %d, %Y %I:%M %p"),   # "July 15, 2026 6:13 PM"
+        (date_str.replace(" at ", " "), "%b %d, %Y %I:%M %p"),   # "Jul 15, 2026 6:13 PM" (detail page)
     ]
     for s, fmt in candidates:
         try:
