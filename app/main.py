@@ -42,6 +42,7 @@ from app.database import (
     get_webhook_delivery,
     get_setting_updated_at,
     get_daily_metrics,
+    get_all_caller_phones,
     AUTH_STATE_KEY,
     init_db,
     load_auth_state,
@@ -54,6 +55,7 @@ from app.database import (
 )
 from app.webhook import deliver as webhook_deliver
 from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list, scrape_impressions_for_date, scrape_account_summary, AUTH_STATE_PATH
+from app.phone_lookup import lookup_phone_reputation, normalize_phone, to_json as phone_lookup_to_json
 from app.r2 import get_audio_bytes as r2_get_audio
 from app.tokens import verify_audio_token
 from app.transcriber import transcribe_audio
@@ -351,6 +353,80 @@ def _best_caller_name(lead: dict) -> str | None:
     return None
 
 
+async def _score_spam(client_id: int, lead_id: str) -> None:
+    """
+    Best-effort caller/spam rating for an analysed lead. Never raises.
+
+    Blends three signals into a 0-100 spam_score (+ human-readable reasons):
+      1. AI transcript classification (spam_likelihood in analysis_json)
+      2. IPQS caller-number reputation (skipped for Google tracking numbers)
+      3. Cross-account history — the same caller hitting multiple unrelated
+         client accounts is a near-certain spam signal unique to our data.
+    """
+    try:
+        lead = await get_lead(client_id, lead_id)
+        if not lead:
+            return
+        reasons: list[str] = []
+        score = 0
+
+        # 1) AI transcript signal (primary evidence when a transcript exists)
+        try:
+            ad = json.loads(lead.get("analysis_json") or "{}")
+        except Exception:
+            ad = {}
+        ai_spam = ad.get("spam_likelihood")
+        if isinstance(ai_spam, (int, float)):
+            score = max(score, int(ai_spam))
+            if ai_spam >= 50:
+                reasons.append(f"AI: {ad.get('spam_type') or 'spam'} ({int(ai_spam)}%)")
+
+        # 2) Caller-number reputation (cached on the lead row; one lookup ever)
+        lookup = None
+        updates: dict = {}
+        if lead.get("phone_lookup_json"):
+            try:
+                lookup = json.loads(lead["phone_lookup_json"])
+            except Exception:
+                lookup = None
+        elif lead.get("caller_phone"):
+            lookup = await lookup_phone_reputation(lead["caller_phone"])
+            if lookup:
+                updates["phone_lookup_json"] = phone_lookup_to_json(lookup)
+        if lookup:
+            if lookup.get("spammer") or lookup.get("recent_abuse"):
+                score = max(score, 75)
+                reasons.append("number flagged for abuse/spam (IPQS)")
+            elif (lookup.get("fraud_score") or 0) >= 85:
+                score = max(score, 50)
+                reasons.append(f"high-risk number (IPQS {lookup['fraud_score']})")
+            if lookup.get("valid") is False:
+                score = max(score, 60)
+                reasons.append("invalid phone number")
+
+        # 3) Cross-account repeat caller
+        digits, had_ext = normalize_phone(lead.get("caller_phone"))
+        if digits and not had_ext:
+            others = set()
+            for cid, phone in await get_all_caller_phones():
+                d, _ = normalize_phone(phone)
+                if d == digits and cid != client_id:
+                    others.add(cid)
+            if others:
+                score = min(100, score + 25)
+                reasons.append(f"same caller seen on {len(others)} other account(s)")
+
+        await update_lead(client_id, lead_id, {
+            **updates,
+            "spam_score": score,
+            "spam_reasons": "; ".join(reasons) or None,
+        })
+        if score >= 50:
+            logger.info(f"[spam] Lead {lead_id} scored {score}: {'; '.join(reasons)}")
+    except Exception as e:
+        logger.warning(f"[spam] Scoring failed for lead {lead_id}: {e}")
+
+
 async def _process_lead(client_id: int, lead_id: str):
     """Full pipeline: scrape → (transcribe if phone) → analyze."""
     lead = await get_lead(client_id, lead_id)
@@ -401,6 +477,7 @@ async def _process_lead(client_id: int, lead_id: str):
             analysis_result["contact_name"] = google_name
         await update_lead(client_id, lead_id, analysis_result)
         if analysis_result.get("analysis_status") == "completed":
+            await _score_spam(client_id, lead_id)
             await _trigger_webhook_for_lead(client_id, lead_id)
 
 
@@ -552,6 +629,7 @@ async def _transcribe_and_analyze(client_id: int, lead_id: str):
             result["contact_name"] = google_name
         await update_lead(client_id, lead_id, result)
         if result.get("analysis_status") == "completed":
+            await _score_spam(client_id, lead_id)
             await _trigger_webhook_for_lead(client_id, lead_id)
 
 
@@ -1171,6 +1249,8 @@ async def reanalyze_lead(request: Request, lead_id: str, background_tasks: Backg
         if google_name:
             result["contact_name"] = google_name
         await update_lead(client["id"], lead_id, result)
+        if result.get("analysis_status") == "completed":
+            await _score_spam(client["id"], lead_id)
 
     background_tasks.add_task(_reanalyze)
     return {"message": "Re-analyzing lead in background."}

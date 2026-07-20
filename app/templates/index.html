@@ -316,6 +316,13 @@
             {% else %}
               <span class="text-muted">—</span>
             {% endif %}
+            {% if not portal_mode and (lead.spam_score or 0) >= 70 %}
+              <span class="badge bg-danger" data-bs-toggle="tooltip"
+                    data-bs-title="Spam risk {{ lead.spam_score }}/100 — {{ lead.spam_reasons or 'see lead' }}">🚩 Spam?</span>
+            {% elif not portal_mode and (lead.spam_score or 0) >= 40 %}
+              <span class="badge bg-warning text-dark" data-bs-toggle="tooltip"
+                    data-bs-title="Spam risk {{ lead.spam_score }}/100 — {{ lead.spam_reasons or 'see lead' }}">?</span>
+            {% endif %}
           </td>
           <td data-value="{{ lead.analysis_status or '' }}">
             {% set overall = lead.analysis_status %}

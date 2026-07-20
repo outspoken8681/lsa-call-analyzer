@@ -49,7 +49,9 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
 - call_summary: 2-4 sentences summarizing the message exchange and any next steps
 - service_requested: what service/job they were asking about (if mentioned)
 - follow_up_required (true/false): does the business still need to respond or take action?
-- follow_up_notes: what follow-up is needed (if any)"""
+- follow_up_notes: what follow-up is needed (if any)
+- spam_likelihood (0-100): how likely this is spam/solicitation rather than a real customer. High for: bulk marketing messages, someone selling services TO the business (SEO, lead-gen, ads), scams, gibberish. Low for genuine service requests.
+- spam_type: one of "solicitor", "scam", "wrong_contact", "gibberish", or null if not spam"""
         system_prompt = _SYSTEM_PROMPT_MESSAGE
     else:
         content_label = "Call transcript"
@@ -61,7 +63,9 @@ async def analyze_transcript(transcript: str, lead_metadata: dict = None) -> dic
 - call_summary: 2-4 sentences of what was discussed and any next steps
 - service_requested: what service/job they were asking about (if mentioned)
 - follow_up_required (true/false): is there a clear action item needed?
-- follow_up_notes: what follow-up is needed (if any)"""
+- follow_up_notes: what follow-up is needed (if any)
+- spam_likelihood (0-100): how likely this is spam rather than a real customer. High for: robocalls/recorded messages, telemarketers selling TO the business (SEO, ads, lead-gen), scams, wrong numbers, dead air with no intent. Low for genuine service requests, even rambling ones.
+- spam_type: one of "robocall", "solicitor", "scam", "wrong_number", "dead_air", or null if not spam"""
         system_prompt = _SYSTEM_PROMPT_CALL
 
     user_message = f"""{"Metadata:\n" + context + "\n\n" if context else ""}{content_label}:

@@ -92,6 +92,10 @@ CREATE INDEX IF NOT EXISTS idx_leads_call_date ON leads (client_id, call_date DE
 
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_type TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_name TEXT;
+-- Caller reputation + spam scoring
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_lookup_json TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS spam_score INTEGER;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS spam_reasons TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_password_plain TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_synced_at TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_sync_new_leads INTEGER;
@@ -403,6 +407,16 @@ async def get_webhook_deliveries_for_lead(client_id: int, lead_id: str) -> list[
             client_id, lead_id,
         )
         return [dict(r) for r in rows]
+
+
+async def get_all_caller_phones() -> list[tuple[int, str]]:
+    """(client_id, caller_phone) for every lead with a phone — for cross-account
+    repeat-caller detection. Small table; normalization happens in Python."""
+    async with _get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT client_id, caller_phone FROM leads WHERE caller_phone IS NOT NULL AND caller_phone != ''"
+        )
+        return [(r["client_id"], r["caller_phone"]) for r in rows]
 
 
 # ── App settings (durable key/value) ──────────────────────────────────────────

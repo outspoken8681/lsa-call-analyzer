@@ -268,6 +268,14 @@
 
         <hr>
 
+        {% if not portal_mode and (lead.spam_score or 0) >= 40 %}
+        <div class="alert {% if lead.spam_score >= 70 %}alert-danger{% else %}alert-warning{% endif %} py-2 mb-3">
+          <i class="bi bi-flag-fill me-1"></i>
+          <strong>Spam risk {{ lead.spam_score }}/100</strong>
+          {% if lead.spam_reasons %}<span class="small"> — {{ lead.spam_reasons }}</span>{% endif %}
+        </div>
+        {% endif %}
+
         <div class="mb-3">
           <div class="small fw-semibold text-muted text-uppercase mb-1">Summary</div>
           <p class="mb-0">{{ lead.call_summary }}</p>
