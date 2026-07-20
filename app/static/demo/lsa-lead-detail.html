@@ -5,54 +5,133 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Local Services Ads — Demo Lead Detail</title>
 <style>
-  * { box-sizing: border-box; margin: 0; }
-  body { font-family: Roboto, Arial, sans-serif; background: #f8f9fa; color: #202124; }
-  .topbar { background: #fff; border-bottom: 1px solid #dadce0; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
-  .topbar h1 { font-size: 18px; font-weight: 400; color: #5f6368; }
-  .demo-pill { background: #fce8e6; color: #c5221f; font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 4px 10px; border-radius: 12px; }
-  .wrap { max-width: 760px; margin: 22px auto; padding: 0 24px; }
-  .card { background: #fff; border: 1px solid #dadce0; border-radius: 8px; padding: 20px 24px; margin-bottom: 16px; }
-  .card h2 { font-size: 15px; font-weight: 500; margin-bottom: 14px; }
-  .row { display: flex; font-size: 13px; padding: 6px 0; }
-  .row .k { width: 180px; color: #5f6368; }
-  .chip { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; background: #e8f0fe; color: #1967d2; }
-  .msg { border-left: 3px solid #dadce0; padding: 8px 12px; margin: 10px 0; font-size: 13px; }
-  .msg .who { font-weight: 500; }
-  .msg .when { color: #80868b; font-size: 12px; margin-left: 6px; }
-  .note { margin: 16px 0 40px; color: #80868b; font-size: 12px; text-align: center; }
-  a.back { display:inline-block; margin-bottom: 14px; color: #1a73e8; font-size: 13px; text-decoration: none; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Roboto, Arial, sans-serif; background: #fff; color: #202124; }
+
+  /* ── Blue top bar ─────────────────────────────────────────── */
+  .topbar { background: #4285f4; color: #fff; height: 52px; display: flex; align-items: center; padding: 0 16px; }
+  .topbar .back { color: #fff; text-decoration: none; font-size: 20px; width: 40px; }
+  .topbar .title { flex: 1; text-align: center; font-size: 16px; }
+  .topbar .title b { font-weight: 500; }
+  .topbar .title .sep { opacity: .6; margin: 0 10px; font-weight: 300; }
+  .topbar .actions { display: flex; align-items: center; gap: 18px; }
+  .topbar .archive { color: #fff; font-size: 13px; font-weight: 500; letter-spacing: .04em; text-decoration: none; }
+  .topbar .booked { background: #fff; color: #1a73e8; font-size: 13px; font-weight: 500; letter-spacing: .04em;
+                    border: none; border-radius: 3px; padding: 8px 14px; box-shadow: 0 1px 2px rgba(0,0,0,.25); cursor: pointer; }
+
+  /* ── Card ─────────────────────────────────────────────────── */
+  .wrap { max-width: 640px; margin: 28px auto 40px; padding: 0 16px; }
+  .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .section { padding: 22px 26px; }
+  .head { display: flex; align-items: baseline; justify-content: space-between; }
+  .head h2 { font-size: 19px; font-weight: 500; }
+  .head a { color: #1a73e8; font-size: 13px; text-decoration: none; }
+  .received { color: #5f6368; font-size: 12.5px; margin: 4px 0 18px; }
+
+  .row { display: flex; align-items: center; font-size: 13px; padding: 7px 0; }
+  .row .k { width: 145px; color: #5f6368; flex-shrink: 0; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12.5px; background: #e8f0fe; color: #1967d2; }
+
+  .form-row { display: flex; align-items: flex-end; font-size: 13px; padding: 14px 0 0; }
+  .form-row .k { width: 145px; color: #5f6368; flex-shrink: 0; padding-bottom: 6px; }
+  .form-row .input { flex: 1; color: #9aa0a6; padding-bottom: 6px; border-bottom: 1px solid #dadce0; }
+  .form-row .input.dotted { border-bottom: 1px dotted #c4c7cb; }
+
+  .divider { border-top: 1px solid #e8eaed; }
+
+  /* ── Conversation ─────────────────────────────────────────── */
+  .conv h2 { font-size: 18px; font-weight: 500; margin-bottom: 18px; }
+  .msg-head { display: flex; align-items: flex-start; }
+  .avatar { width: 38px; height: 38px; border-radius: 50%; background: #f4511e; color: #fff;
+            display: flex; align-items: center; justify-content: center; font-size: 16px; margin-right: 14px; flex-shrink: 0; }
+  .who { font-size: 13.5px; }
+  .sub { color: #5f6368; font-size: 12.5px; margin-top: 4px; display: flex; align-items: center; gap: 5px; }
+  .sub .arrow { color: #188038; font-size: 13px; }
+  .msg-meta { margin-left: auto; text-align: right; }
+  .msg-meta .when { color: #80868b; font-size: 12px; }
+  .msg-meta .toggle { display: block; color: #1a73e8; font-size: 12px; font-weight: 500; letter-spacing: .04em;
+                      text-decoration: none; margin-top: 10px; }
+
+  /* ── Mock audio player ────────────────────────────────────── */
+  .player { background: #f8f9fa; border-top: 1px solid #eceff1; margin-top: 18px;
+            padding: 24px 30px; display: flex; align-items: center; gap: 14px; }
+  .play { width: 0; height: 0; border-left: 13px solid #5f6368; border-top: 8px solid transparent;
+          border-bottom: 8px solid transparent; cursor: pointer; }
+  .time { font-size: 12px; color: #5f6368; white-space: nowrap; }
+  .track { flex: 1; height: 2px; background: #dadce0; border-radius: 1px; position: relative; }
+  .track .fill { position: absolute; left: 0; top: 0; height: 2px; width: 72%; background: #1a73e8; }
+  .track .knob { position: absolute; left: 72%; top: 50%; transform: translate(-50%, -50%);
+                 width: 12px; height: 12px; border-radius: 50%; background: #1a73e8; }
+  .vol { display: flex; align-items: center; gap: 10px; width: 120px; }
+  .vol .icon { color: #5f6368; font-size: 15px; }
+  .vol .track { width: 70px; }
+  .vol .fill { width: 100%; }
+  .vol .knob { left: 100%; }
+
+  .note { margin: 18px 0 30px; color: #9aa0a6; font-size: 11.5px; text-align: center; }
 </style>
 </head>
 <body>
   <div class="topbar">
-    <h1>Local Services Ads &middot; Lead</h1>
-    <span class="demo-pill">DEMO DATA</span>
+    <a class="back" href="lsa-lead-list.html">&#8592;</a>
+    <div class="title"><b>Potential Customer</b><span class="sep">|</span>(404) 555-0142</div>
+    <div class="actions">
+      <a class="archive" href="#" onclick="return false;">ARCHIVE</a>
+      <button class="booked" type="button">MARK BOOKED</button>
+    </div>
   </div>
+
   <div class="wrap">
-    <a class="back" href="lsa-lead-list.html">&larr; Back to leads</a>
     <div class="card">
-      <h2>Lead summary</h2>
-      <div class="row"><div class="k">Received on</div><div>Today at 10:14 AM</div></div>
-      <div class="row"><div class="k">Status</div><div>Active</div></div>
-      <div class="row"><div class="k">Charge status</div><div><span class="chip">Charged</span></div></div>
-      <div class="row"><div class="k">Lead id</div><div>900000031</div></div>
-      <div class="row"><div class="k">Lead type</div><div>Phone</div></div>
-      <div class="row"><div class="k">Business category</div><div>Personal Injury Lawyer</div></div>
-      <div class="row"><div class="k">Service type</div><div>Auto accidents</div></div>
-      <div class="row"><div class="k">Location</div><div>Atlanta</div></div>
-    </div>
-    <div class="card">
-      <h2>Conversation</h2>
-      <div class="msg">
-        <span class="who">Sample Caller</span><span class="when">10:14 AM</span>
-        <div>Hi, I was rear-ended on the highway last week and the insurance company is giving me the runaround. I'd like to speak with an attorney about my options.</div>
+      <div class="section">
+        <div class="head">
+          <h2>Lead summary</h2>
+          <a href="#" onclick="return false;">Rate this lead</a>
+        </div>
+        <div class="received">Received on Jul 17, 2026 at 10:59 AM.</div>
+
+        <div class="row"><div class="k">Status</div><div>Active</div></div>
+        <div class="row"><div class="k">Charge status</div><div><span class="chip">Charged</span></div></div>
+        <div class="row"><div class="k">Lead id</div><div>900000031</div></div>
+        <div class="row"><div class="k">Lead type</div><div>Phone</div></div>
+        <div class="row"><div class="k">Business category</div><div>Personal Injury Lawyer</div></div>
+        <div class="row"><div class="k">Location</div><div>Atlanta</div></div>
+        <div class="row"><div class="k">Search intent</div><div>Category</div></div>
+
+        <div class="form-row"><div class="k">Customer name</div><div class="input">Add customer name</div></div>
+        <div class="form-row"><div class="k">Customer email</div><div class="input dotted">To enter the customer email, first mark this lead as booked.</div></div>
+        <div class="form-row"><div class="k">Your notes</div><div class="input dotted">Notes you add here are not visible to the customer, but do not include sensitive, confidential or proprietary info.</div></div>
       </div>
-      <div class="msg">
-        <span class="who">Really Great Personal Injury Attorneys</span><span class="when">10:21 AM</span>
-        <div>Thank you for reaching out — we'd be glad to help. One of our attorneys will call you shortly for a free consultation.</div>
+
+      <div class="divider"></div>
+
+      <div class="section conv">
+        <h2>Conversation</h2>
+        <div class="msg-head">
+          <div class="avatar">P</div>
+          <div>
+            <div class="who">Potential customer</div>
+            <div class="sub"><span class="arrow">&#8601;</span> Incoming call</div>
+          </div>
+          <div class="msg-meta">
+            <span class="when">7/17/26</span>
+            <a class="toggle" href="#" onclick="return false;">HIDE RECORDING &#8963;</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="player">
+        <div class="play"></div>
+        <div class="time">0:21 / 0:28</div>
+        <div class="track"><div class="fill"></div><div class="knob"></div></div>
+        <div class="vol">
+          <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="#5f6368"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+          <div class="track"><div class="fill"></div><div class="knob"></div></div>
+        </div>
       </div>
     </div>
-    <p class="note">This is a static demonstration page with generated sample data. It is not affiliated with or operated by Google.</p>
+
+    <p class="note">Demonstration page with generated sample data. Not affiliated with or operated by Google.</p>
   </div>
 </body>
 </html>
