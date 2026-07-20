@@ -209,6 +209,8 @@ async def _scheduled_sync():
         return
     logger.info(f"[scheduler] Auto-sync starting for {len(eligible)} client(s)...")
     await _scan_all_clients_task(eligible)
+    # Spend any leftover daily IPQS quota rating historical caller numbers.
+    await _drip_phone_lookups()
 
 
 @asynccontextmanager
@@ -425,6 +427,44 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
             logger.info(f"[spam] Lead {lead_id} scored {score}: {'; '.join(reasons)}")
     except Exception as e:
         logger.warning(f"[spam] Scoring failed for lead {lead_id}: {e}")
+
+
+async def _drip_phone_lookups(max_lookups: int = 25) -> None:
+    """
+    Spend leftover daily IPQS quota rating historical leads that never got a
+    number lookup (the free tier allows ~35/day; new leads use some, this
+    drip uses the rest). Newest calls first, across all clients. Stops the
+    moment quota is exhausted. Self-healing: once history is covered this
+    no-ops. Never raises.
+    """
+    from app import phone_lookup as _pl
+    if not _pl.enabled():
+        return
+    try:
+        candidates: list[tuple[str, int, str]] = []  # (call_date, client_id, lead_id)
+        for c in await get_all_clients():
+            for l in await get_all_leads(c["id"], limit=1000, offset=0):
+                if l.get("phone_lookup_json"):
+                    continue
+                digits, ext = _pl.normalize_phone(l.get("caller_phone"))
+                if not digits or ext:
+                    continue
+                candidates.append((l.get("call_date") or "", c["id"], l["id"]))
+        if not candidates:
+            return
+        candidates.sort(reverse=True)  # newest first
+        done = 0
+        for _, cid, lid in candidates[:max_lookups * 2]:  # headroom for failures
+            if done >= max_lookups or _pl._quota_blocked_until > 0:
+                break
+            await _score_spam(cid, lid)
+            lead = await get_lead(cid, lid)
+            if lead and lead.get("phone_lookup_json"):
+                done += 1
+        logger.info(f"[spam] Lookup drip: rated {done} historical number(s), "
+                    f"{len(candidates) - done} still pending.")
+    except Exception as e:
+        logger.warning(f"[spam] Lookup drip failed: {e}")
 
 
 async def _process_lead(client_id: int, lead_id: str):
