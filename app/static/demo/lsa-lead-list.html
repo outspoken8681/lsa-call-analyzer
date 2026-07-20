@@ -5,53 +5,117 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Local Services Ads — Demo Lead Inbox</title>
 <style>
-  * { box-sizing: border-box; margin: 0; }
-  body { font-family: Roboto, Arial, sans-serif; background: #f8f9fa; color: #202124; }
-  .topbar { background: #fff; border-bottom: 1px solid #dadce0; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
-  .topbar h1 { font-size: 18px; font-weight: 400; color: #5f6368; }
-  .demo-pill { background: #fce8e6; color: #c5221f; font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 4px 10px; border-radius: 12px; }
-  .account { padding: 16px 24px 0; color: #5f6368; font-size: 13px; }
-  .account b { color: #202124; font-size: 15px; font-weight: 500; display: block; }
-  .wrap { max-width: 1100px; margin: 18px auto; padding: 0 24px; }
-  .card { background: #fff; border: 1px solid #dadce0; border-radius: 8px; overflow: hidden; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; color: #5f6368; font-weight: 500; padding: 12px 16px; border-bottom: 1px solid #dadce0; background: #fff; }
-  td { padding: 12px 16px; border-bottom: 1px solid #f1f3f4; }
-  tr:hover td { background: #f8f9fa; }
-  .chip { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; background: #e8f0fe; color: #1967d2; }
-  .chip.review { background: #fef7e0; color: #b06000; }
-  .chip.not { background: #f1f3f4; color: #5f6368; }
-  .chip.credit { background: #e6f4ea; color: #137333; }
-  .note { margin: 16px 0 40px; color: #80868b; font-size: 12px; text-align: center; }
-  a.lead { color: #1a73e8; text-decoration: none; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Roboto, Arial, sans-serif; background: #fff; color: #202124; }
+
+  /* ── Blue app bar ─────────────────────────────────────────── */
+  .topbar { background: #4285f4; color: #fff; height: 52px; display: flex; align-items: center; padding: 0 18px; gap: 18px; }
+  .burger { display: inline-flex; flex-direction: column; gap: 4px; cursor: pointer; }
+  .burger span { width: 18px; height: 2px; background: #fff; border-radius: 1px; }
+  .topbar h1 { font-size: 17px; font-weight: 400; flex: 1; }
+  .topbar .right { display: flex; align-items: center; gap: 20px; }
+  .bell { position: relative; width: 16px; height: 18px; }
+  .bell svg { display: block; }
+  .bell .dot { position: absolute; top: -3px; right: -4px; width: 8px; height: 8px; border-radius: 50%; background: #ea4335; border: 1.5px solid #4285f4; }
+  .grid { display: grid; grid-template-columns: repeat(3, 4px); grid-gap: 2.5px; }
+  .grid i { width: 4px; height: 4px; background: #fff; border-radius: 1px; }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; background: #34a853; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+
+  /* ── Account strip ────────────────────────────────────────── */
+  .account { padding: 12px 18px 10px; border-bottom: 1px solid #eceff1; }
+  .account .name { font-size: 14px; }
+  .account .name .caret { color: #5f6368; font-size: 10px; margin-left: 6px; }
+  .account .cid { color: #80868b; font-size: 11.5px; margin-top: 3px; }
+
+  /* ── Content column ───────────────────────────────────────── */
+  .wrap { max-width: 960px; margin: 26px auto 40px; padding: 0 20px; }
+
+  .banner { border: 1px solid #81c995; border-radius: 8px; padding: 13px 16px; display: flex; align-items: center; gap: 10px;
+            font-size: 13px; margin-bottom: 26px; }
+  .banner .check { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #188038; color: #188038;
+                   display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; }
+
+  .panel { border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .filters { display: flex; align-items: center; gap: 26px; padding: 14px 18px; }
+  .filters .f { font-size: 13px; color: #202124; cursor: default; }
+  .filters .f .caret { color: #5f6368; font-size: 9px; margin-left: 5px; }
+  .filters .dl { margin-left: auto; background: #1a73e8; color: #fff; border: none; border-radius: 4px;
+                 font-size: 12.5px; font-weight: 500; letter-spacing: .04em; padding: 9px 14px; cursor: pointer; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { text-align: left; color: #5f6368; font-weight: 500; padding: 12px 14px; background: #f8f9fa;
+             border-top: 1px solid #eceff1; border-bottom: 1px solid #eceff1; white-space: nowrap; }
+  tbody td { padding: 14px; border-bottom: 1px solid #f1f3f4; white-space: nowrap; color: #3c4043; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: #f8f9fa; }
+  tr.unread td { font-weight: 700; color: #202124; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: #e8f0fe; color: #1967d2; font-weight: 500; }
+  .muted { color: #9aa0a6; }
+  tr.unread td .muted { font-weight: 400; }
+  .help { display: inline-flex; width: 13px; height: 13px; border: 1px solid #9aa0a6; border-radius: 50%; color: #9aa0a6;
+          font-size: 9px; align-items: center; justify-content: center; font-weight: 400; margin-left: 5px; vertical-align: 1px; }
+
+  .note { margin: 18px 0 30px; color: #9aa0a6; font-size: 11.5px; text-align: center; }
 </style>
 </head>
 <body>
   <div class="topbar">
-    <h1>Local Services Ads &middot; Leads</h1>
-    <span class="demo-pill">DEMO DATA</span>
+    <span class="burger"><span></span><span></span><span></span></span>
+    <h1>Leads</h1>
+    <div class="right">
+      <span class="bell">
+        <svg width="16" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+        <span class="dot"></span>
+      </span>
+      <span class="grid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="avatar">D</span>
+    </div>
   </div>
+
   <div class="account">
-    <b>Really Great Personal Injury Attorneys</b>
-    Customer ID: 555-000-0000
+    <div class="name">Really Great Personal Injury Attorneys <span class="caret">&#9660;</span></div>
+    <div class="cid">Customer ID: 555-000-0000</div>
   </div>
+
   <div class="wrap">
-    <div class="card">
+    <div class="banner">
+      <span class="check">&#10003;</span>
+      <span>So far, you're expected to receive a <b>$85.00</b> credit to spend towards leads next month.</span>
+    </div>
+
+    <div class="panel">
+      <div class="filters">
+        <span class="f">Any lead status <span class="caret">&#9660;</span></span>
+        <span class="f">Any charge status <span class="caret">&#9660;</span></span>
+        <span class="f">Any lead type <span class="caret">&#9660;</span></span>
+        <span class="f">All search intents <span class="caret">&#9660;</span></span>
+        <span class="f">All time <span class="caret">&#9660;</span></span>
+        <button class="dl" type="button">DOWNLOAD</button>
+      </div>
       <table>
         <thead>
-          <tr><th>Customer</th><th>Job type</th><th>Location</th><th>Lead type</th><th>Charge status</th><th>Lead received</th><th>Lead id</th></tr>
+          <tr><th>Customer</th><th>Job type</th><th>Search Intent</th><th>Location</th><th>Lead type</th><th>Charge status</th><th>Lead received</th><th>Last activity</th><th>Lead id</th></tr>
         </thead>
         <tbody>
-          <tr><td><a class="lead" href="lsa-lead-detail.html">(404) 555-0142</a></td><td>Auto accidents</td><td>Atlanta</td><td>Phone</td><td><span class="chip">Charged</span></td><td>Today 10:14 AM</td><td>900000031</td></tr>
-          <tr><td><a class="lead" href="lsa-lead-detail.html">Dana W.</a></td><td>Slip &amp; fall</td><td>Marietta</td><td>Message</td><td><span class="chip">Charged</span></td><td>Today 8:52 AM</td><td>900000030</td></tr>
-          <tr><td><a class="lead" href="lsa-lead-detail.html">(770) 555-0163</a></td><td>Workers' comp</td><td>Smyrna</td><td>Phone</td><td><span class="chip review">In review</span></td><td>Yesterday 4:31 PM</td><td>900000029</td></tr>
-          <tr><td><a class="lead" href="lsa-lead-detail.html">(678) 555-0117</a></td><td>—</td><td>Decatur</td><td>Phone</td><td><span class="chip not">Not charged</span></td><td>Yesterday 2:05 PM</td><td>900000028</td></tr>
-          <tr><td><a class="lead" href="lsa-lead-detail.html">Marcus T.</a></td><td>Auto accidents</td><td>Sandy Springs</td><td>Message</td><td><span class="chip">Charged</span></td><td>Yesterday 11:47 AM</td><td>900000027</td></tr>
-          <tr><td><a class="lead" href="lsa-lead-detail.html">(470) 555-0195</a></td><td>Dog bites</td><td>Roswell</td><td>Phone</td><td><span class="chip credit">Credited</span></td><td>2 days ago</td><td>900000026</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(404) 555-0142</td><td>Auto accidents</td><td>Category</td><td>Atlanta</td><td>Phone</td><td><span class="chip">Charged</span></td><td>7/17/26 10:59 AM</td><td>7/18/26 11:01 AM</td><td>900000031</td></tr>
+          <tr class="unread" onclick="location='lsa-lead-detail.html'"><td>Dana Whitfield</td><td>Slip &amp; fall</td><td>Category</td><td>Marietta</td><td>Message</td><td><span class="chip">Charged</span></td><td>7/17/26 8:52 AM</td><td>7/18/26 8:52 AM</td><td>900000030</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(770) 555-0163</td><td>Workers' compensation</td><td>Category</td><td>Smyrna</td><td>Phone</td><td><span class="chip">Charged</span></td><td>7/16/26 4:31 PM</td><td>7/17/26 4:35 PM</td><td>900000029</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(678) 555-0117</td><td class="muted">-</td><td>Category</td><td>Decatur</td><td>Phone</td><td><span class="muted">Not charged</span></td><td>7/16/26 2:05 PM</td><td>7/16/26 2:06 PM</td><td>900000028</td></tr>
+          <tr class="unread" onclick="location='lsa-lead-detail.html'"><td>Marcus Turner</td><td>Auto accidents</td><td>Category</td><td>Sandy Springs</td><td>Message</td><td><span class="chip">Charged</span></td><td>7/16/26 11:47 AM</td><td>7/17/26 11:47 AM</td><td>900000027</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(470) 555-0195</td><td>Dog bites</td><td>Category</td><td>Roswell</td><td>Phone</td><td><span class="muted">Credited</span></td><td>7/15/26 3:22 PM</td><td>7/15/26 3:23 PM</td><td>900000026</td></tr>
+          <tr class="unread" onclick="location='lsa-lead-detail.html'"><td>(559) 555-0148 ext. 12964<span class="help">?</span></td><td>Motorcycle accid...</td><td>Category</td><td>Alpharetta</td><td>Message</td><td><span class="chip">Charged</span></td><td>7/15/26 7:20 PM</td><td>7/15/26 7:20 PM</td><td>900000025</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(813) 555-0121</td><td>Truck accidents</td><td>Category</td><td>Duluth</td><td>Phone</td><td><span class="muted">Not charged</span></td><td>7/15/26 1:17 PM</td><td>7/15/26 1:18 PM</td><td>900000024</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(912) 555-0186</td><td class="muted">-</td><td>Direct Business</td><td>Lawrenceville</td><td>Phone</td><td><span class="muted">Not charged</span></td><td>7/15/26 12:17 PM</td><td>7/15/26 12:18 PM</td><td>900000023</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td class="muted">-</td><td>Slip &amp; fall</td><td>Category</td><td>Austell</td><td>Message</td><td><span class="chip">Charged</span></td><td>7/14/26 11:17 PM</td><td>7/15/26 11:17 PM</td><td>900000022</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(470) 555-0110</td><td class="muted">-</td><td>Category</td><td>Cedartown</td><td>Phone</td><td><span class="muted">Not charged</span></td><td>7/14/26 6:55 PM</td><td>7/14/26 6:56 PM</td><td>900000021</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(404) 555-0173</td><td>Pedestrian accidents</td><td>Category</td><td>Kennesaw</td><td>Phone</td><td><span class="chip">Charged</span></td><td>7/14/26 4:05 PM</td><td>7/14/26 4:07 PM</td><td>900000020</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(404) 555-0139</td><td>Auto accidents</td><td>Category</td><td>Ellijay</td><td>Phone</td><td><span class="chip">Charged</span></td><td>7/13/26 2:19 PM</td><td>7/14/26 2:27 PM</td><td>900000019</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(770) 555-0154</td><td class="muted">-</td><td>Category</td><td>Rome</td><td>Phone</td><td><span class="muted">Not charged</span></td><td>7/13/26 1:02 PM</td><td>7/13/26 1:02 PM</td><td>900000018</td></tr>
+          <tr onclick="location='lsa-lead-detail.html'"><td>(678) 555-0128</td><td>Workers' compensation</td><td>Category</td><td>Cartersville</td><td>Phone</td><td><span class="chip">Charged</span></td><td>7/13/26 9:41 AM</td><td>7/14/26 9:46 AM</td><td>900000017</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="note">This is a static demonstration page with generated sample data. It is not affiliated with or operated by Google.</p>
+    <p class="note">Demonstration page with generated sample data. Not affiliated with or operated by Google.</p>
   </div>
 </body>
 </html>
