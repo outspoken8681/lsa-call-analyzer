@@ -166,16 +166,21 @@ def build_leads(now: datetime, audio_key: str | None) -> list[dict]:
         lead_id[0] += 1
         return str(lead_id[0])
 
-    # spread datetimes over the past 42 days, weekday-weighted, newest last
+    # Spread datetimes over the past 42 days, weekday-weighted. Build backwards
+    # from today so the newest lead always lands on the current date — the demo
+    # must look like an actively-running account.
     slots: list[datetime] = []
-    day = 0
-    while len(slots) < 50 and day < 42:
-        d = now - timedelta(days=42 - day)
+    back = 0
+    while len(slots) < 50 and back < 42:
+        d = now - timedelta(days=back)
         n = rng.choice([1, 1, 2, 2, 2, 3]) if d.weekday() < 5 else rng.choice([0, 1, 1])
+        if back == 0:
+            n = max(n, 1)          # guarantee at least one lead today
         for _ in range(n):
-            slots.append(d.replace(hour=rng.randrange(8, 19), minute=rng.randrange(0, 59), second=0, microsecond=0))
-        day += 1
-    slots = sorted(slots)[:50]
+            hour = rng.randrange(8, min(now.hour + 1, 19)) if back == 0 and now.hour > 8 else rng.randrange(8, 19)
+            slots.append(d.replace(hour=hour, minute=rng.randrange(0, 59), second=0, microsecond=0))
+        back += 1
+    slots = sorted(slots)[-50:]
 
     def base(dt, **kw) -> dict:
         d = {

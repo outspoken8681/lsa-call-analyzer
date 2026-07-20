@@ -43,6 +43,8 @@ from app.database import (
     get_setting_updated_at,
     get_daily_metrics,
     get_all_caller_phones,
+    get_max_lead_date,
+    shift_client_dates,
     AUTH_STATE_KEY,
     init_db,
     load_auth_state,
@@ -247,8 +249,16 @@ async def lifespan(app: FastAPI):
             id="auto_sync", misfire_grace_time=300,
         )
         logger.info("[scheduler] Auto-sync scheduled every 2 hours, 8 am–8 pm Eastern.")
+
+    # Demo accounts: slide synthetic dates forward so they always look current.
+    _scheduler.add_job(
+        _roll_demo_dates,
+        CronTrigger(hour=1, minute=0, timezone=_EASTERN),
+        id="demo_roll", misfire_grace_time=3600,
+    )
     _scheduler.start()
     logger.info("[scheduler] Webhook retry checker active (every 5 min).")
+    await _roll_demo_dates()   # also catch up immediately on boot
     yield
     if _scheduler.running:
         _scheduler.shutdown(wait=False)
@@ -427,6 +437,33 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
             logger.info(f"[spam] Lead {lead_id} scored {score}: {'; '.join(reasons)}")
     except Exception as e:
         logger.warning(f"[spam] Scoring failed for lead {lead_id}: {e}")
+
+
+async def _roll_demo_dates() -> None:
+    """
+    Keep demo accounts looking live: slide every synthetic lead and impression
+    day forward so the newest lead always lands on today. Runs at startup and
+    once a day. No-op when already current. Never raises.
+    """
+    try:
+        today = _datetime.now(_EASTERN).date()
+        for client in await get_all_clients():
+            if not client.get("is_demo"):
+                continue
+            newest = await get_max_lead_date(client["id"])
+            if not newest:
+                continue
+            gap = (today - _datetime.fromisoformat(newest).date()).days
+            if gap <= 0:
+                continue
+            await shift_client_dates(client["id"], gap)
+            await update_client(client["id"], {
+                "last_synced_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S"),
+                "r30_updated_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            logger.info(f"[demo] Rolled {client['slug']} forward {gap} day(s).")
+    except Exception as e:
+        logger.warning(f"[demo] Date roll-forward failed: {e}")
 
 
 async def _drip_phone_lookups(max_lookups: int = 25) -> None:

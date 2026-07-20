@@ -411,6 +411,56 @@ async def get_webhook_deliveries_for_lead(client_id: int, lead_id: str) -> list[
         return [dict(r) for r in rows]
 
 
+async def shift_client_dates(client_id: int, days: int) -> None:
+    """
+    Move every lead timestamp and daily-metric date for a client forward by
+    `days`. Used to keep the demo account looking live: the same synthetic
+    leads slide forward so the newest one is always "today".
+
+    Only ISO-format (YYYY-MM-DD...) values are touched, so legacy/unparseable
+    strings are left alone.
+    """
+    if days <= 0:
+        return
+    async with _get_pool().acquire() as conn:
+        async with conn.transaction():
+            for col in ("call_date", "scraped_at", "transcribed_at", "analyzed_at"):
+                await conn.execute(
+                    f"""UPDATE leads
+                        SET {col} = to_char(
+                            ({col})::timestamp + make_interval(days => $2),
+                            'YYYY-MM-DD"T"HH24:MI:SS')
+                        WHERE client_id = $1
+                          AND {col} ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}'""",
+                    client_id, days,
+                )
+            # daily_metrics is keyed on (client_id, date); rewrite rather than
+            # UPDATE so the shift can't transiently collide with the primary key.
+            rows = await conn.fetch(
+                "SELECT date, impressions FROM daily_metrics WHERE client_id = $1", client_id
+            )
+            if rows:
+                await conn.execute("DELETE FROM daily_metrics WHERE client_id = $1", client_id)
+                from datetime import date as _d, timedelta as _td
+                await conn.executemany(
+                    """INSERT INTO daily_metrics (client_id, date, impressions, updated_at)
+                       VALUES ($1, $2, $3, NOW())""",
+                    [(client_id,
+                      (_d.fromisoformat(r["date"]) + _td(days=days)).isoformat(),
+                      r["impressions"]) for r in rows],
+                )
+
+
+async def get_max_lead_date(client_id: int) -> Optional[str]:
+    """Newest ISO call_date for a client, or None."""
+    async with _get_pool().acquire() as conn:
+        return await conn.fetchval(
+            """SELECT MAX(call_date) FROM leads
+               WHERE client_id = $1 AND call_date ~ '^\\d{4}-\\d{2}-\\d{2}'""",
+            client_id,
+        )
+
+
 async def get_all_caller_phones() -> list[tuple[int, str]]:
     """(client_id, caller_phone) for every lead with a phone — for cross-account
     repeat-caller detection. Small table; normalization happens in Python."""
