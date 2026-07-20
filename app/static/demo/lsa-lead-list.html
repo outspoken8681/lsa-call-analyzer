@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Services Ads — Demo Lead Inbox</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: Roboto, Arial, sans-serif; background: #f8f9fa; color: #202124; }
+  .topbar { background: #fff; border-bottom: 1px solid #dadce0; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+  .topbar h1 { font-size: 18px; font-weight: 400; color: #5f6368; }
+  .demo-pill { background: #fce8e6; color: #c5221f; font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 4px 10px; border-radius: 12px; }
+  .account { padding: 16px 24px 0; color: #5f6368; font-size: 13px; }
+  .account b { color: #202124; font-size: 15px; font-weight: 500; display: block; }
+  .wrap { max-width: 1100px; margin: 18px auto; padding: 0 24px; }
+  .card { background: #fff; border: 1px solid #dadce0; border-radius: 8px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: #5f6368; font-weight: 500; padding: 12px 16px; border-bottom: 1px solid #dadce0; background: #fff; }
+  td { padding: 12px 16px; border-bottom: 1px solid #f1f3f4; }
+  tr:hover td { background: #f8f9fa; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; background: #e8f0fe; color: #1967d2; }
+  .chip.review { background: #fef7e0; color: #b06000; }
+  .chip.not { background: #f1f3f4; color: #5f6368; }
+  .chip.credit { background: #e6f4ea; color: #137333; }
+  .note { margin: 16px 0 40px; color: #80868b; font-size: 12px; text-align: center; }
+  a.lead { color: #1a73e8; text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Local Services Ads &middot; Leads</h1>
+    <span class="demo-pill">DEMO DATA</span>
+  </div>
+  <div class="account">
+    <b>Really Great Personal Injury Attorneys</b>
+    Customer ID: 555-000-0000
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Customer</th><th>Job type</th><th>Location</th><th>Lead type</th><th>Charge status</th><th>Lead received</th><th>Lead id</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><a class="lead" href="lsa-lead-detail.html">(404) 555-0142</a></td><td>Auto accidents</td><td>Atlanta</td><td>Phone</td><td><span class="chip">Charged</span></td><td>Today 10:14 AM</td><td>900000031</td></tr>
+          <tr><td><a class="lead" href="lsa-lead-detail.html">Dana W.</a></td><td>Slip &amp; fall</td><td>Marietta</td><td>Message</td><td><span class="chip">Charged</span></td><td>Today 8:52 AM</td><td>900000030</td></tr>
+          <tr><td><a class="lead" href="lsa-lead-detail.html">(770) 555-0163</a></td><td>Workers' comp</td><td>Smyrna</td><td>Phone</td><td><span class="chip review">In review</span></td><td>Yesterday 4:31 PM</td><td>900000029</td></tr>
+          <tr><td><a class="lead" href="lsa-lead-detail.html">(678) 555-0117</a></td><td>—</td><td>Decatur</td><td>Phone</td><td><span class="chip not">Not charged</span></td><td>Yesterday 2:05 PM</td><td>900000028</td></tr>
+          <tr><td><a class="lead" href="lsa-lead-detail.html">Marcus T.</a></td><td>Auto accidents</td><td>Sandy Springs</td><td>Message</td><td><span class="chip">Charged</span></td><td>Yesterday 11:47 AM</td><td>900000027</td></tr>
+          <tr><td><a class="lead" href="lsa-lead-detail.html">(470) 555-0195</a></td><td>Dog bites</td><td>Roswell</td><td>Phone</td><td><span class="chip credit">Credited</span></td><td>2 days ago</td><td>900000026</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">This is a static demonstration page with generated sample data. It is not affiliated with or operated by Google.</p>
+  </div>
+</body>
+</html>

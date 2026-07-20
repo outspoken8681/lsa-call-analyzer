@@ -203,7 +203,7 @@ async def _scheduled_sync():
         logger.info("[scheduler] Auto-sync skipped — not authenticated with Google.")
         return
     clients = await get_all_clients()
-    eligible = [c for c in clients if c.get("lead_list_url")]
+    eligible = [c for c in clients if c.get("lead_list_url") and not c.get("is_demo")]
     if not eligible:
         logger.info("[scheduler] Auto-sync skipped — no clients configured.")
         return
@@ -443,6 +443,8 @@ async def _drip_phone_lookups(max_lookups: int = 25) -> None:
     try:
         candidates: list[tuple[str, int, str]] = []  # (call_date, client_id, lead_id)
         for c in await get_all_clients():
+            if c.get("is_demo"):
+                continue  # never spend lookup quota on synthetic demo numbers
             for l in await get_all_leads(c["id"], limit=1000, offset=0):
                 if l.get("phone_lookup_json"):
                     continue
@@ -997,7 +999,7 @@ async def scan_all_clients(request: Request, background_tasks: BackgroundTasks, 
     if _scan_state["running"]:
         raise HTTPException(status_code=409, detail="Scan already in progress.")
     clients = await get_all_clients()
-    eligible = [c for c in clients if c.get("lead_list_url")]
+    eligible = [c for c in clients if c.get("lead_list_url") and not c.get("is_demo")]
     if not eligible:
         raise HTTPException(status_code=400, detail="No clients have a lead list URL configured.")
     background_tasks.add_task(_scan_all_clients_task, eligible)
@@ -1192,6 +1194,8 @@ async def trigger_scrape(request: Request, background_tasks: BackgroundTasks, ma
         raise HTTPException(status_code=400, detail="No client selected.")
     if not client.get("lead_list_url"):
         raise HTTPException(status_code=400, detail="Client has no lead list URL configured.")
+    if client.get("is_demo"):
+        raise HTTPException(status_code=400, detail="This is a demo account — nothing to sync.")
     background_tasks.add_task(_scrape_and_process_all, client, max_leads)
     return {"message": f"Scraping up to {max_leads} leads for {client['name']} in background."}
 

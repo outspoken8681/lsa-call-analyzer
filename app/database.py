@@ -104,6 +104,8 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS business_type TEXT;
 -- LSA advertiser ID as shown in Google's account picker (NOT the cid in the URL).
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS google_account_id TEXT;
+-- Demo/sandbox accounts: excluded from scraping, syncing, and phone lookups.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0;
 -- Rolling 30-day Reports snapshot (spend + charged leads), refreshed on sync.
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_spend REAL;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_leads INTEGER;

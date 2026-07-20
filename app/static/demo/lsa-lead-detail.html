@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Services Ads — Demo Lead Detail</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: Roboto, Arial, sans-serif; background: #f8f9fa; color: #202124; }
+  .topbar { background: #fff; border-bottom: 1px solid #dadce0; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+  .topbar h1 { font-size: 18px; font-weight: 400; color: #5f6368; }
+  .demo-pill { background: #fce8e6; color: #c5221f; font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 4px 10px; border-radius: 12px; }
+  .wrap { max-width: 760px; margin: 22px auto; padding: 0 24px; }
+  .card { background: #fff; border: 1px solid #dadce0; border-radius: 8px; padding: 20px 24px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; font-weight: 500; margin-bottom: 14px; }
+  .row { display: flex; font-size: 13px; padding: 6px 0; }
+  .row .k { width: 180px; color: #5f6368; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; background: #e8f0fe; color: #1967d2; }
+  .msg { border-left: 3px solid #dadce0; padding: 8px 12px; margin: 10px 0; font-size: 13px; }
+  .msg .who { font-weight: 500; }
+  .msg .when { color: #80868b; font-size: 12px; margin-left: 6px; }
+  .note { margin: 16px 0 40px; color: #80868b; font-size: 12px; text-align: center; }
+  a.back { display:inline-block; margin-bottom: 14px; color: #1a73e8; font-size: 13px; text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Local Services Ads &middot; Lead</h1>
+    <span class="demo-pill">DEMO DATA</span>
+  </div>
+  <div class="wrap">
+    <a class="back" href="lsa-lead-list.html">&larr; Back to leads</a>
+    <div class="card">
+      <h2>Lead summary</h2>
+      <div class="row"><div class="k">Received on</div><div>Today at 10:14 AM</div></div>
+      <div class="row"><div class="k">Status</div><div>Active</div></div>
+      <div class="row"><div class="k">Charge status</div><div><span class="chip">Charged</span></div></div>
+      <div class="row"><div class="k">Lead id</div><div>900000031</div></div>
+      <div class="row"><div class="k">Lead type</div><div>Phone</div></div>
+      <div class="row"><div class="k">Business category</div><div>Personal Injury Lawyer</div></div>
+      <div class="row"><div class="k">Service type</div><div>Auto accidents</div></div>
+      <div class="row"><div class="k">Location</div><div>Atlanta</div></div>
+    </div>
+    <div class="card">
+      <h2>Conversation</h2>
+      <div class="msg">
+        <span class="who">Sample Caller</span><span class="when">10:14 AM</span>
+        <div>Hi, I was rear-ended on the highway last week and the insurance company is giving me the runaround. I'd like to speak with an attorney about my options.</div>
+      </div>
+      <div class="msg">
+        <span class="who">Really Great Personal Injury Attorneys</span><span class="when">10:21 AM</span>
+        <div>Thank you for reaching out — we'd be glad to help. One of our attorneys will call you shortly for a free consultation.</div>
+      </div>
+    </div>
+    <p class="note">This is a static demonstration page with generated sample data. It is not affiliated with or operated by Google.</p>
+  </div>
+</body>
+</html>
