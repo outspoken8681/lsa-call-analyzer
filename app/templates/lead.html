@@ -268,7 +268,7 @@
 
         <hr>
 
-        {% if not portal_mode and (lead.spam_score or 0) >= 40 %}
+        {% if (lead.spam_score or 0) >= 40 %}
         <div class="alert {% if lead.spam_score >= 70 %}alert-danger{% else %}alert-warning{% endif %} py-2 mb-3">
           <i class="bi bi-flag-fill me-1"></i>
           <strong>Spam risk {{ lead.spam_score }}/100</strong>
