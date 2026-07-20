@@ -250,9 +250,10 @@
           <th data-col="6" class="sortable">Answered <i class="bi bi-arrow-down-up sort-icon"></i></th>
           <th data-col="7" class="sortable">Charged <i class="bi bi-arrow-down-up sort-icon"></i></th>
           <th data-col="8" class="sortable">Score <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="9" class="sortable">Status <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="10" class="sortable">Service Requested <i class="bi bi-arrow-down-up sort-icon"></i></th>
-          <th data-col="11" class="sortable">Lead ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="9" class="sortable">Spam? <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="10" class="sortable">Status <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="11" class="sortable">Service Requested <i class="bi bi-arrow-down-up sort-icon"></i></th>
+          <th data-col="12" class="sortable">Lead ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
           <th></th>
         </tr>
       </thead>
@@ -316,9 +317,11 @@
             {% else %}
               <span class="text-muted">—</span>
             {% endif %}
+          </td>
+          <td data-value="{{ lead.spam_score or 0 }}" class="text-center">
             {% if (lead.spam_score or 0) >= 70 %}
-              <span class="badge bg-danger" data-bs-toggle="tooltip"
-                    data-bs-title="Spam risk {{ lead.spam_score }}/100 — {{ lead.spam_reasons or 'see lead' }}">🚩 Spam?</span>
+              <span class="text-danger" style="font-size:1rem;" data-bs-toggle="tooltip"
+                    data-bs-title="Spam risk {{ lead.spam_score }}/100 — {{ lead.spam_reasons or 'see lead' }}">🚩</span>
             {% elif (lead.spam_score or 0) >= 40 %}
               <span class="badge bg-warning text-dark" data-bs-toggle="tooltip"
                     data-bs-title="Spam risk {{ lead.spam_score }}/100 — {{ lead.spam_reasons or 'see lead' }}">?</span>
