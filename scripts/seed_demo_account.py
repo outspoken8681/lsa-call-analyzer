@@ -2,11 +2,12 @@
 """
 seed_demo_account.py — create/refresh the sales-demo client with synthetic leads.
 
-Builds "Really Great Personal Injury Attorneys": ~50 generated leads over the
-past 6 weeks (answered calls, missed calls, voicemails, message threads, and a
-handful of spam examples), daily ad-impression metrics, and a 30-day summary at
-~$85/lead. All names and numbers are fictional (555-01xx range). The client is
-flagged is_demo so syncs, scrapes, and phone lookups never touch it.
+Builds "Really Great Personal Injury Attorneys": 3-7 generated leads per day
+across the past 6 weeks (answered calls, missed calls, voicemails, message
+threads, and a handful of spam examples), daily ad-impression metrics, and a
+30-day summary at ~$85/lead. All names and numbers are fictional (555-01xx
+range). The client is flagged is_demo so syncs, scrapes, and phone lookups
+never touch it.
 
 Re-runnable: deletes any existing client with the demo slug, then recreates it.
 
@@ -37,6 +38,10 @@ LEAD_LIST_URL = f"{BASE}/static/demo/lsa-lead-list.html"
 LEAD_DETAIL_URL = f"{BASE}/static/demo/lsa-lead-detail.html"
 AUDIO_R2_KEY = "demo/sample-lead-recording.mp3"
 COST_PER_LEAD = 85.0
+
+DAYS_OF_HISTORY = 42        # 6 weeks — matches the dashboard chart window
+MIN_PER_DAY = 3             # every day gets at least this many leads
+MAX_PER_DAY = 7             # busiest weekdays cap here
 
 rng = random.Random(20260720)
 
@@ -168,19 +173,20 @@ def build_leads(now: datetime, audio_key: str | None) -> list[dict]:
 
     # Spread datetimes over the past 42 days, weekday-weighted. Build backwards
     # from today so the newest lead always lands on the current date — the demo
-    # must look like an actively-running account.
+    # must look like an actively-running account. 3-7 leads every day, with
+    # weekdays busier than weekends.
     slots: list[datetime] = []
-    back = 0
-    while len(slots) < 50 and back < 42:
+    for back in range(DAYS_OF_HISTORY):
         d = now - timedelta(days=back)
-        n = rng.choice([1, 1, 2, 2, 2, 3]) if d.weekday() < 5 else rng.choice([0, 1, 1])
-        if back == 0:
-            n = max(n, 1)          # guarantee at least one lead today
+        weekday = d.weekday() < 5
+        n = rng.randrange(4, MAX_PER_DAY + 1) if weekday else rng.randrange(MIN_PER_DAY, 6)
         for _ in range(n):
-            hour = rng.randrange(8, min(now.hour + 1, 19)) if back == 0 and now.hour > 8 else rng.randrange(8, 19)
+            # Today's leads must not be timestamped in the future.
+            hi = min(now.hour + 1, 19) if back == 0 else 19
+            lo = 8 if hi > 8 else max(0, hi - 1)
+            hour = rng.randrange(lo, hi) if hi > lo else lo
             slots.append(d.replace(hour=hour, minute=rng.randrange(0, 59), second=0, microsecond=0))
-        back += 1
-    slots = sorted(slots)[-50:]
+    slots.sort()
 
     def base(dt, **kw) -> dict:
         d = {
