@@ -628,6 +628,16 @@ async function deleteLead(leadId, btn) {
 }
 {% endif %}
 
+// ── Tooltips ──────────────────────────────────────────────────────────────────
+// Chart tooltips are initialised when the chart re-renders; this covers the rest
+// of the page (e.g. the Spam? column badges), which is otherwise never wired up.
+function initTooltips(root) {
+  (root || document).querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+    bootstrap.Tooltip.getOrCreateInstance(el, { trigger: 'hover focus' });
+  });
+}
+initTooltips();
+
 // ── Filter checkboxes — auto-submit on change ─────────────────────────────────
 document.querySelectorAll('.filter-cb').forEach(cb => {
   cb.addEventListener('change', () => {
