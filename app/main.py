@@ -365,6 +365,32 @@ def _best_caller_name(lead: dict) -> str | None:
     return None
 
 
+# Plain-English descriptions of what the AI flagged, keyed by spam_type.
+_SPAM_TYPE_PHRASES = {
+    "robocall":      "this sounds like an automated robocall or recorded message",
+    "solicitor":     "the caller was selling a product or service to the business, not requesting help",
+    "scam":          "the conversation shows signs of a scam attempt",
+    "wrong_number":  "the caller appears to have reached the wrong number",
+    "wrong_contact": "the caller appears to have reached the wrong number",
+    "dead_air":      "the call had no meaningful conversation (dead air or immediate hang-up)",
+    "gibberish":     "the message content was gibberish or nonsensical",
+}
+
+
+def _spam_verdict(score) -> str | None:
+    """Short plain-English verdict from a spam_score (0-100)."""
+    if score is None:
+        return None
+    if score >= 70:
+        return "Likely spam"
+    if score >= 40:
+        return "Possibly spam"
+    return "Looks legitimate"
+
+
+templates.env.filters["spam_verdict"] = _spam_verdict
+
+
 async def _score_spam(client_id: int, lead_id: str) -> None:
     """
     Best-effort caller/spam rating for an analysed lead. Never raises.
@@ -391,7 +417,9 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
         if isinstance(ai_spam, (int, float)):
             score = max(score, int(ai_spam))
             if ai_spam >= 50:
-                reasons.append(f"AI: {ad.get('spam_type') or 'spam'} ({int(ai_spam)}%)")
+                reasons.append(_SPAM_TYPE_PHRASES.get(
+                    ad.get("spam_type"),
+                    "the conversation reads like spam rather than a genuine inquiry"))
 
         # 2) Caller-number reputation (cached on the lead row; one lookup ever)
         lookup = None
@@ -408,13 +436,15 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
         if lookup:
             if lookup.get("spammer") or lookup.get("recent_abuse"):
                 score = max(score, 75)
-                reasons.append("number flagged for abuse/spam (IPQS)")
+                reasons.append("this phone number has a history of spam or abuse")
             elif (lookup.get("fraud_score") or 0) >= 85:
                 score = max(score, 50)
-                reasons.append(f"high-risk number (IPQS {lookup['fraud_score']})")
+                reasons.append("this phone number has a high fraud-risk rating")
             if lookup.get("valid") is False:
                 score = max(score, 60)
-                reasons.append("invalid phone number")
+                reasons.append("the phone number appears invalid")
+            elif lookup.get("voip"):
+                reasons.append("the call came from an internet (VoIP) line, common for spam")
 
         # 3) Cross-account repeat caller
         digits, had_ext = normalize_phone(lead.get("caller_phone"))
@@ -426,7 +456,9 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
                     others.add(cid)
             if others:
                 score = min(100, score + 25)
-                reasons.append(f"same caller seen on {len(others)} other account(s)")
+                n = len(others)
+                reasons.append(f"this caller has contacted {n} other unrelated "
+                               f"business{'es' if n != 1 else ''} we monitor")
 
         await update_lead(client_id, lead_id, {
             **updates,

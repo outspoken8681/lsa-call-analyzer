@@ -239,25 +239,24 @@
     {# Caller/spam rating — shown for any scored lead, including missed calls
        that have no transcript or AI analysis. #}
     {% if lead.spam_score is not none %}
-    {% if lead.spam_score >= 70 %}
-    <div class="alert alert-danger py-2 mb-3">
-      <i class="bi bi-flag-fill me-1"></i>
-      <strong>Spam risk {{ lead.spam_score }}/100</strong>
-      {% if lead.spam_reasons %}<span class="small"> — {{ lead.spam_reasons }}</span>{% endif %}
-    </div>
-    {% elif lead.spam_score >= 40 %}
-    <div class="alert alert-warning py-2 mb-3">
-      <i class="bi bi-question-circle-fill me-1"></i>
-      <strong>Spam risk {{ lead.spam_score }}/100</strong>
-      {% if lead.spam_reasons %}<span class="small"> — {{ lead.spam_reasons }}</span>{% endif %}
-    </div>
-    {% else %}
-    <div class="alert alert-success py-2 mb-3">
-      <i class="bi bi-check-circle-fill me-1"></i>
-      <strong>Spam risk low</strong>
-      <span class="small"> — {{ lead.spam_score }}/100</span>
-    </div>
+    {% if lead.spam_score >= 70 %}{% set _cls, _icon = 'alert-danger', 'bi-flag-fill' %}
+    {% elif lead.spam_score >= 40 %}{% set _cls, _icon = 'alert-warning', 'bi-question-circle-fill' %}
+    {% else %}{% set _cls, _icon = 'alert-success', 'bi-check-circle-fill' %}
     {% endif %}
+    <div class="alert {{ _cls }} py-2 mb-3">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi {{ _icon }}"></i>
+        <strong>{{ lead.spam_score | spam_verdict }}</strong>
+        <span class="small text-muted">Spam risk {{ lead.spam_score }}/100</span>
+      </div>
+      {% if lead.spam_reasons %}
+      <div class="small mt-1">
+        Why: {{ lead.spam_reasons.split('; ') | join('; ') }}.
+      </div>
+      {% elif lead.spam_score < 40 %}
+      <div class="small mt-1 text-muted">No spam indicators found for this caller.</div>
+      {% endif %}
+    </div>
     {% endif %}
 
     {% if lead.analysis_status == 'completed' and lead.call_summary %}

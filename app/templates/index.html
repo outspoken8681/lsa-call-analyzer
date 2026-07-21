@@ -321,10 +321,10 @@
           <td data-value="{{ lead.spam_score or 0 }}" class="text-center">
             {% if (lead.spam_score or 0) >= 70 %}
               <span class="text-danger" style="font-size:1rem;" data-bs-toggle="tooltip"
-                    data-bs-title="Spam risk {{ lead.spam_score }}/100 — {{ lead.spam_reasons or 'see lead' }}">🚩</span>
+                    data-bs-title="{{ lead.spam_score | spam_verdict }} ({{ lead.spam_score }}/100){% if lead.spam_reasons %} — {{ lead.spam_reasons }}{% endif %}">🚩</span>
             {% elif (lead.spam_score or 0) >= 40 %}
               <span class="badge bg-warning text-dark" data-bs-toggle="tooltip"
-                    data-bs-title="Spam risk {{ lead.spam_score }}/100 — {{ lead.spam_reasons or 'see lead' }}">?</span>
+                    data-bs-title="{{ lead.spam_score | spam_verdict }} ({{ lead.spam_score }}/100){% if lead.spam_reasons %} — {{ lead.spam_reasons }}{% endif %}">?</span>
             {% endif %}
           </td>
           <td data-value="{{ lead.analysis_status or '' }}">
