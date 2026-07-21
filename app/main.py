@@ -615,6 +615,12 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
         is_message = lead.get("lead_type") == "message"
         if lead.get("scrape_status") == "completed" and (lead.get("audio_path") or is_message):
             await _transcribe_and_analyze(client_id, lead["id"])
+        elif lead.get("scrape_status") == "completed":
+            # Missed calls (no audio, no transcript) skip the analyze pipeline and
+            # thus never got spam-scored — but phone-reputation and cross-account
+            # signals don't need a transcript, and these calls matter most. Score
+            # them directly.
+            await _score_spam(client_id, lead["id"])
 
     try:
         await scrape_all_leads(client, max_leads=max_leads,
