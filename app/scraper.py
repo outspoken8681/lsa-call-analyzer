@@ -632,7 +632,23 @@ async def _select_single_day_and_read(page, target_date, slug: str) -> Optional[
                        f"got {applied!r}, expected {expected_range!r}. Skipping.")
         return None
 
-    impressions = _parse_impressions(await page.evaluate("() => document.body.innerText"))
+    # The heading can update a beat before the tiles repaint, so require two
+    # consecutive identical reads before trusting the number. Without this the
+    # first day of a multi-day run could capture the previous (30-day) total.
+    impressions = None
+    prev = object()
+    for _ in range(6):
+        cur = _parse_impressions(await page.evaluate("() => document.body.innerText"))
+        if cur is not None and cur == prev:
+            impressions = cur
+            break
+        prev = cur
+        await page.wait_for_timeout(1200)
+    else:
+        impressions = prev if isinstance(prev, int) else None
+        if impressions is not None:
+            logger.warning(f"[{slug}] Impressions for {target_date} never stabilised; "
+                           f"using last read ({impressions}).")
     if impressions is None:
         logger.warning(f"[{slug}] Could not read impressions for {target_date}.")
     else:
