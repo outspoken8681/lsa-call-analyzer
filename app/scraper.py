@@ -344,18 +344,59 @@ async def get_lead_list(client: dict) -> list[dict]:
     return leads
 
 
+async def _dismiss_promo_cards(page) -> None:
+    """
+    Google shows rotating promo cards ("Upload photos", "Allow customers to
+    message your business") above the lead table. They overlay the nav and make
+    the Reports link unclickable, so dismiss any that are present.
+    """
+    try:
+        n = await page.evaluate("""() => {
+            let clicked = 0;
+            document.querySelectorAll('button, [role=button], a, span, div').forEach(e => {
+                if (e.children.length === 0 &&
+                    (e.textContent || '').trim().toLowerCase() === 'dismiss' &&
+                    e.offsetParent !== null) {
+                    e.click(); clicked++;
+                }
+            });
+            return clicked;
+        }""")
+        if n:
+            logger.info(f"Dismissed {n} promo card(s) blocking the nav.")
+            await page.wait_for_timeout(1200)
+    except Exception:
+        pass
+
+
 async def _go_to_reports(page, lead_list_url: str) -> bool:
     """
-    Navigate to the LSA Reports page. The direct /reports URL redirect-loops on
-    MCC-managed accounts, so we reach it the same way the UI does: load the lead
-    list, then open the hamburger drawer and click 'Reports'.
+    Navigate to the LSA Reports page.
+
+    Primary path: the Reports page lives at the same URL as the inbox with
+    /inbox swapped for /reports (all the cid/bid/mcid params carry over), so go
+    there directly — no fragile nav clicking. Falls back to the old
+    hamburger -> "Reports" click if the direct URL doesn't render.
     """
+    # 1) Direct URL (fast, and immune to promo cards covering the nav).
+    if "/localservices/inbox" in lead_list_url:
+        reports_url = lead_list_url.replace("/localservices/inbox", "/localservices/reports", 1)
+        try:
+            await page.goto(reports_url, wait_until="domcontentloaded", timeout=25000)
+            await page.wait_for_timeout(3000)
+            if await _wait_for_text(page, r"ad impressions", timeout_ms=20000):
+                return True
+        except Exception as e:
+            logger.info(f"Direct Reports URL failed ({str(e)[:80]}); falling back to nav click.")
+
+    # 2) Fallback: load the inbox and click through the drawer.
     try:
         await page.goto(lead_list_url, wait_until="domcontentloaded", timeout=25000)
     except Exception:
         pass
     await page.wait_for_timeout(5000)
     await _ensure_on_lead_list(page, lead_list_url)
+    await _dismiss_promo_cards(page)
 
     await page.evaluate("""() => {
         const b = document.querySelector('[aria-label="Main menu"]');
@@ -365,7 +406,9 @@ async def _go_to_reports(page, lead_list_url: str) -> bool:
     try:
         el = await page.query_selector("text='Reports'")
         if el:
-            await el.click()
+            # force=True: the drawer item can be reported "not visible" while an
+            # overlay/animation is settling, which previously burned 30s of retries.
+            await el.click(timeout=8000, force=True)
     except Exception as e:
         logger.warning(f"Reports nav click failed: {e}")
         return False
