@@ -1202,10 +1202,9 @@ async def toggle_client_active(request: Request, client_id: int, _csrf: None = D
 async def root(request: Request):
     if not _is_admin(request):
         return RedirectResponse("/admin/login", status_code=302)
-    ctx = await _admin_context(request)
-    if ctx["current_client"]:
-        return RedirectResponse("/leads", status_code=302)
-    return RedirectResponse("/admin/clients", status_code=302)
+    # Agency users land on the multi-account dashboard; portal users never hit
+    # this route (their entry point is /portal/<slug>).
+    return RedirectResponse("/admin/dashboard", status_code=302)
 
 
 @app.get("/admin/scan-status")

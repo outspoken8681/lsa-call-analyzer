@@ -251,10 +251,29 @@
       </div>
       {% if lead.spam_reasons %}
       <div class="small mt-1">
-        Why: {{ lead.spam_reasons.split('; ') | join('; ') }}.
+        Why: {{ lead.spam_reasons }}.
       </div>
       {% elif lead.spam_score < 40 %}
       <div class="small mt-1 text-muted">No spam indicators found for this caller.</div>
+      {% endif %}
+
+      {% if lead.spam_signals %}
+      {% set signals = lead.spam_signals | from_json %}
+      {% if signals %}
+      <hr class="my-2 opacity-25">
+      <div class="small">
+        <div class="fw-semibold mb-1">Checks performed</div>
+        {% for s in signals %}
+        <div class="d-flex align-items-start gap-2 mb-1">
+          {% if s.status == 'flag' %}<i class="bi bi-exclamation-triangle-fill text-danger mt-1"></i>
+          {% elif s.status == 'pass' %}<i class="bi bi-check-circle-fill text-success mt-1"></i>
+          {% elif s.status == 'note' %}<i class="bi bi-info-circle-fill text-secondary mt-1"></i>
+          {% else %}<i class="bi bi-dash-circle text-muted mt-1"></i>{% endif %}
+          <div><span class="fw-medium">{{ s.check }}:</span> {{ s.detail }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
       {% endif %}
     </div>
     {% endif %}
@@ -468,7 +487,7 @@ async function deleteLead() {
   if (!confirm('Remove this lead? This cannot be undone.')) return;
   const res = await fetch(`/leads/${LEAD_ID}`, { method: 'DELETE', headers: csrfHeaders() });
   if (res.ok) {
-    window.location.href = '/';
+    window.location.href = '/leads';
   } else {
     showToast('Delete failed', 'danger');
   }
