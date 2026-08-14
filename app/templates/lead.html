@@ -7,13 +7,7 @@
 {% set back_url = lead_base %}
 
 {% block nav_extra %}
-  <a id="btn-prev" href="#" class="btn btn-sm btn-light disabled" aria-label="Previous lead">
-    <i class="bi bi-chevron-left"></i>
-  </a>
   <a href="{{ back_url }}" class="btn btn-sm btn-light"><i class="bi bi-list me-1"></i>All Leads</a>
-  <a id="btn-next" href="#" class="btn btn-sm btn-light disabled" aria-label="Next lead">
-    <i class="bi bi-chevron-right"></i>
-  </a>
 {% endblock %}
 
 {% block content %}
@@ -21,7 +15,13 @@
 
   <!-- Left column: metadata + actions -->
   <div class="col-lg-4">
-    <div class="card border-0 shadow-sm mb-3">
+    <div class="card border-0 shadow-sm mb-3 position-relative">
+      <a id="btn-prev" href="#" class="lead-nav-arrow lead-nav-prev disabled" aria-label="Previous lead" title="Previous lead (←)">
+        <i class="bi bi-chevron-left"></i>
+      </a>
+      <a id="btn-next" href="#" class="lead-nav-arrow lead-nav-next disabled" aria-label="Next lead" title="Next lead (→)">
+        <i class="bi bi-chevron-right"></i>
+      </a>
       <div class="card-body">
         <h5 class="card-title fw-semibold mb-3">
           <i class="bi bi-person-circle me-2 text-primary"></i>{{ lead.caller_name or 'Unknown Caller' }}
@@ -391,6 +391,31 @@
 {% block styles %}
 <style>
 #name-display:hover { color: #0d6efd; text-decoration: underline dotted; }
+
+/* Prev/next lead arrows — pinned to the sides of the lead-name card,
+   vertically centered, floating half off the card edge. */
+.lead-nav-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(15, 23, 42, .18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tt-slate);
+  font-size: 1.05rem;
+  text-decoration: none;
+  z-index: 5;
+  transition: background .15s, color .15s;
+}
+.lead-nav-prev { left: -17px; }
+.lead-nav-next { right: -17px; }
+.lead-nav-arrow:hover { background: var(--tt-slate); color: #fff; }
+.lead-nav-arrow.disabled { opacity: .3; pointer-events: none; }
 </style>
 {% endblock %}
 
