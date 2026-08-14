@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Agency Dashboard — LSA Call Analyzer{% endblock %}
+
+{% block nav_extra %}
+  <a href="/admin/clients" class="btn btn-sm btn-light"><i class="bi bi-gear me-1"></i>Manage Clients</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h4 class="mb-0 fw-semibold">Agency Dashboard</h4>
+    <small class="text-muted">{{ active_rows | length }} active account{{ 's' if active_rows | length != 1 }}{% if inactive_rows %} · {{ inactive_rows | length }} inactive{% endif %}</small>
+  </div>
+</div>
+
+{# ── Agency totals ─────────────────────────────────────────────────────────── #}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2 px-3">
+    <div class="d-flex align-items-center flex-wrap gap-4">
+      <span class="text-muted small fw-medium text-uppercase" style="letter-spacing:.03em;">All active accounts</span>
+      <div class="d-flex align-items-baseline gap-1">
+        <span class="fw-semibold fs-5">{{ totals.leads_7d }}</span>
+        <span class="text-muted small">Leads (7d)</span>
+      </div>
+      <div class="d-flex align-items-baseline gap-1">
+        <span class="fw-semibold fs-5">{{ totals.leads_30d }}</span>
+        <span class="text-muted small">Leads (30d)</span>
+      </div>
+      <div class="d-flex align-items-baseline gap-1">
+        <span class="fw-semibold fs-5">${{ '{:,.2f}'.format(totals.spend_30d) }}</span>
+        <span class="text-muted small">Spend (30d)</span>
+      </div>
+      <div class="d-flex align-items-baseline gap-1">
+        <span class="fw-semibold fs-5">{{ '{:,}'.format(totals.impressions_7d) }}</span>
+        <span class="text-muted small">Impressions (7d)</span>
+      </div>
+      <div class="d-flex align-items-baseline gap-1">
+        <span class="fw-semibold fs-5 {% if totals.spam_30d %}text-danger{% endif %}">{{ totals.spam_30d }}</span>
+        <span class="text-muted small">Spam flagged (30d)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Active accounts ───────────────────────────────────────────────────────── #}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Account</th>
+          <th style="min-width:130px;">Last 14 days</th>
+          <th class="text-end">Leads 7d</th>
+          <th class="text-end">Missed 7d</th>
+          <th class="text-end">Leads 30d</th>
+          <th class="text-end">Spend 30d</th>
+          <th class="text-end">Avg $/Lead</th>
+          <th class="text-end">Impr. 7d</th>
+          <th class="text-end">Spam 30d</th>
+          <th>Synced</th>
+          <th class="text-end"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in active_rows %}
+        <tr>
+          <td>
+            <div class="fw-medium">{{ r.client.name }}</div>
+            {% if r.client.google_account_id %}<small class="text-muted font-monospace">#{{ r.client.google_account_id }}</small>{% endif %}
+          </td>
+          <td>
+            <div class="d-flex align-items-end gap-1" style="height:28px;" title="Daily leads, oldest → today">
+              {% for v in r.spark %}
+              <div style="flex:1;min-width:4px;border-radius:1px;
+                          height:{{ [4, (28 * v / r.spark_max) | round(0, 'ceil') | int] | max }}px;
+                          background:{{ 'var(--tt-slate)' if v else '#e2e8f0' }};"></div>
+              {% endfor %}
+            </div>
+          </td>
+          <td class="text-end fw-semibold">{{ r.leads_7d }}</td>
+          <td class="text-end {% if r.missed_7d %}text-danger{% else %}text-muted{% endif %}">{{ r.missed_7d }}</td>
+          <td class="text-end">{{ r.leads_30d }}</td>
+          <td class="text-end">{% if r.client.r30_spend is not none %}${{ '{:,.2f}'.format(r.client.r30_spend) }}{% else %}—{% endif %}</td>
+          <td class="text-end">{% if r.avg_cpl %}${{ '{:,.2f}'.format(r.avg_cpl) }}{% else %}—{% endif %}</td>
+          <td class="text-end">{{ '{:,}'.format(r.impressions_7d) }}</td>
+          <td class="text-end">
+            {% if r.spam_30d %}<span class="badge bg-danger">{{ r.spam_30d }}</span>{% else %}<span class="text-muted">0</span>{% endif %}
+          </td>
+          <td>
+            {% if r.stale %}
+              <span class="badge bg-warning text-dark" title="Last synced: {{ r.client.last_synced_at or 'never' }}">Stale</span>
+            {% else %}
+              <span class="badge bg-success" title="Last synced: {{ r.client.last_synced_at }}">OK</span>
+            {% endif %}
+          </td>
+          <td class="text-end text-nowrap">
+            <form method="post" action="/admin/clients/{{ r.client.id }}/select" class="d-inline m-0">
+              <input type="hidden" name="csrf_token">
+              <button type="submit" class="btn btn-sm btn-outline-primary py-0">View</button>
+            </form>
+            <form method="post" action="/admin/clients/{{ r.client.id }}/toggle-active" class="d-inline m-0"
+                  onsubmit="return confirm('Deactivate {{ r.client.name }}? It will stop syncing and be hidden from this dashboard until reactivated.')">
+              <input type="hidden" name="csrf_token">
+              <button type="submit" class="btn btn-sm btn-outline-secondary py-0" title="Stop tracking this account">
+                <i class="bi bi-pause-fill"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not active_rows %}
+        <tr><td colspan="11" class="text-center text-muted py-4">No active accounts.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Inactive accounts ─────────────────────────────────────────────────────── #}
+{% if inactive_rows %}
+<div class="card border-0 shadow-sm mt-3">
+  <div class="card-body py-2 px-3">
+    <div class="small fw-semibold text-muted text-uppercase mb-2" style="letter-spacing:.03em;">Inactive accounts (not tracked)</div>
+    {% for r in inactive_rows %}
+    <div class="d-flex align-items-center gap-3 py-1 {% if not loop.last %}border-bottom{% endif %}">
+      <span class="text-muted"><i class="bi bi-pause-circle me-1"></i>{{ r.client.name }}</span>
+      {% if r.client.last_synced_at %}<small class="text-muted">last synced {{ r.client.last_synced_at | fmt_call_date }}</small>{% endif %}
+      <form method="post" action="/admin/clients/{{ r.client.id }}/toggle-active" class="ms-auto m-0">
+        <input type="hidden" name="csrf_token">
+        <button type="submit" class="btn btn-sm btn-outline-success py-0">
+          <i class="bi bi-play-fill me-1"></i>Activate
+        </button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

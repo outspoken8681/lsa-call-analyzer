@@ -158,6 +158,12 @@
 
       <div class="ms-auto d-flex align-items-center gap-2">
 
+        {% if not portal_mode %}
+        <a href="/admin/dashboard" class="btn btn-sm btn-light" title="Agency dashboard">
+          <i class="bi bi-grid-1x2 me-1"></i>Agency
+        </a>
+        {% endif %}
+
         {% if not portal_mode and all_clients %}
         <!-- Client switcher dropdown -->
         <div class="dropdown client-switcher">

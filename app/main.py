@@ -43,6 +43,7 @@ from app.database import (
     get_setting_updated_at,
     get_daily_metrics,
     get_all_caller_phones,
+    get_agency_stats,
     get_max_lead_date,
     shift_client_dates,
     AUTH_STATE_KEY,
@@ -205,7 +206,7 @@ async def _scheduled_sync():
         logger.info("[scheduler] Auto-sync skipped — not authenticated with Google.")
         return
     clients = await get_all_clients()
-    eligible = [c for c in clients if c.get("lead_list_url") and not c.get("is_demo")]
+    eligible = [c for c in clients if c.get("lead_list_url") and not c.get("is_demo") and c.get("is_active", 1)]
     if not eligible:
         logger.info("[scheduler] Auto-sync skipped — no clients configured.")
         return
@@ -391,6 +392,19 @@ def _spam_verdict(score) -> str | None:
 templates.env.filters["spam_verdict"] = _spam_verdict
 
 
+def _from_json(text):
+    """Parse a JSON string stored on a lead; returns None when absent/invalid."""
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+templates.env.filters["from_json"] = _from_json
+
+
 async def _score_spam(client_id: int, lead_id: str) -> None:
     """
     Best-effort caller/spam rating for an analysed lead. Never raises.
@@ -405,7 +419,15 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
         lead = await get_lead(client_id, lead_id)
         if not lead:
             return
+        client = await get_client(client_id)
+        if client and client.get("is_demo"):
+            # Demo accounts carry curated spam scores from the seeder. Their
+            # fictional 555-01xx numbers are unroutable, so IPQS rates them
+            # fraud_score 100 — which would flag nearly every demo lead and
+            # waste real lookup quota.
+            return
         reasons: list[str] = []
+        signals: list[dict] = []       # every check we ran, pass or fail
         score = 0
 
         # 1) AI transcript signal (primary evidence when a transcript exists)
@@ -420,6 +442,17 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
                 reasons.append(_SPAM_TYPE_PHRASES.get(
                     ad.get("spam_type"),
                     "the conversation reads like spam rather than a genuine inquiry"))
+                signals.append({"check": "Conversation analysis", "status": "flag",
+                                "detail": _SPAM_TYPE_PHRASES.get(ad.get("spam_type"), "reads like spam")})
+            else:
+                signals.append({"check": "Conversation analysis", "status": "pass",
+                                "detail": "reads like a genuine inquiry"})
+        elif lead.get("transcript"):
+            signals.append({"check": "Conversation analysis", "status": "skip",
+                            "detail": "not evaluated (analysed before spam detection was added)"})
+        else:
+            signals.append({"check": "Conversation analysis", "status": "skip",
+                            "detail": "no transcript available for this lead"})
 
         # 2) Caller-number reputation (cached on the lead row; one lookup ever)
         lookup = None
@@ -433,18 +466,49 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
             lookup = await lookup_phone_reputation(lead["caller_phone"])
             if lookup:
                 updates["phone_lookup_json"] = phone_lookup_to_json(lookup)
+        # Does the lead itself look like a real inquiry? A usable service request
+        # plus a non-bottom quality score is strong evidence of a genuine customer,
+        # and must outweigh weak number-reputation signals — plenty of real people
+        # call from VoIP/Google Voice numbers that IPQS rates high-risk.
+        genuine_inquiry = bool(ad.get("service_requested")) and (lead.get("qualification_score") or 0) >= 2
+
         if lookup:
+            carrier = lookup.get("carrier") or "unknown carrier"
+            line = (lookup.get("line_type") or "").lower() or "unknown line"
             if lookup.get("spammer") or lookup.get("recent_abuse"):
+                # Hard abuse flags: reliable in practice, keep them strong.
                 score = max(score, 75)
                 reasons.append("this phone number has a history of spam or abuse")
-            elif (lookup.get("fraud_score") or 0) >= 85:
+                signals.append({"check": "Caller number reputation", "status": "flag",
+                                "detail": f"known for spam/abuse — {line} line, {carrier}"})
+            elif (lookup.get("fraud_score") or 0) >= 85 and not genuine_inquiry:
+                # Weak signal on its own — only counts when nothing about the
+                # conversation says "real customer".
                 score = max(score, 50)
                 reasons.append("this phone number has a high fraud-risk rating")
-            if lookup.get("valid") is False:
+                if lookup.get("voip"):
+                    reasons.append("the call came from an internet (VoIP) line, common for spam")
+                signals.append({"check": "Caller number reputation", "status": "flag",
+                                "detail": f"high fraud-risk rating — {line} line, {carrier}"})
+            elif (lookup.get("fraud_score") or 0) >= 85:
+                signals.append({"check": "Caller number reputation", "status": "note",
+                                "detail": f"rated high-risk ({line} line, {carrier}), but the "
+                                          f"conversation shows a genuine service request"})
+            else:
+                signals.append({"check": "Caller number reputation", "status": "pass",
+                                "detail": f"no spam history — {line} line, {carrier}"})
+            if lookup.get("valid") is False and not genuine_inquiry:
                 score = max(score, 60)
                 reasons.append("the phone number appears invalid")
-            elif lookup.get("voip"):
-                reasons.append("the call came from an internet (VoIP) line, common for spam")
+        elif lead.get("caller_phone"):
+            _d, _had_ext = normalize_phone(lead["caller_phone"])
+            signals.append({"check": "Caller number reputation", "status": "skip",
+                            "detail": ("call came through a tracking number, so the caller's own "
+                                       "number isn't available to check") if _had_ext
+                                      else "number not checked yet"})
+        else:
+            signals.append({"check": "Caller number reputation", "status": "skip",
+                            "detail": "no caller number available"})
 
         # 3) Cross-account repeat caller
         digits, had_ext = normalize_phone(lead.get("caller_phone"))
@@ -459,11 +523,21 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
                 n = len(others)
                 reasons.append(f"this caller has contacted {n} other unrelated "
                                f"business{'es' if n != 1 else ''} we monitor")
+                signals.append({"check": "Cross-account history", "status": "flag",
+                                "detail": f"this number also contacted {n} other unrelated "
+                                          f"business{'es' if n != 1 else ''} we monitor"})
+            else:
+                signals.append({"check": "Cross-account history", "status": "pass",
+                                "detail": "not seen contacting any other business we monitor"})
+        else:
+            signals.append({"check": "Cross-account history", "status": "skip",
+                            "detail": "no direct caller number to compare"})
 
         await update_lead(client_id, lead_id, {
             **updates,
             "spam_score": score,
             "spam_reasons": "; ".join(reasons) or None,
+            "spam_signals": json.dumps(signals),
         })
         if score >= 50:
             logger.info(f"[spam] Lead {lead_id} scored {score}: {'; '.join(reasons)}")
@@ -512,8 +586,8 @@ async def _drip_phone_lookups(max_lookups: int = 25) -> None:
     try:
         candidates: list[tuple[str, int, str]] = []  # (call_date, client_id, lead_id)
         for c in await get_all_clients():
-            if c.get("is_demo"):
-                continue  # never spend lookup quota on synthetic demo numbers
+            if c.get("is_demo") or not c.get("is_active", 1):
+                continue  # skip synthetic demo numbers and dormant accounts
             for l in await get_all_leads(c["id"], limit=1000, offset=0):
                 if l.get("phone_lookup_json"):
                     continue
@@ -1046,6 +1120,82 @@ async def admin_select_client(client_id: int, _csrf: None = Depends(_csrf_form))
     return response
 
 
+# ── Admin: agency dashboard ───────────────────────────────────────────────────
+
+@app.get("/admin/dashboard", response_class=HTMLResponse)
+async def agency_dashboard(request: Request):
+    if not _is_admin(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    ctx = await _admin_context(request)
+
+    today = _datetime.now(_EASTERN).date()
+    d7  = (today - timedelta(days=6)).isoformat()    # rolling 7 days incl. today
+    d14 = (today - timedelta(days=13)).isoformat()
+    d30 = (today - timedelta(days=29)).isoformat()
+    stats = await get_agency_stats(d7, d30, d14)
+
+    spark_days = [(today - timedelta(days=13 - i)).isoformat() for i in range(14)]
+    # last_synced_at is stored as naive Eastern local time — compare naively
+    now = _datetime.now(_EASTERN).replace(tzinfo=None)
+
+    active, inactive = [], []
+    for c in ctx["all_clients"]:
+        if c.get("is_demo"):
+            continue
+        s = stats.get(c["id"], {})
+        daily = s.get("daily", {})
+        spark = [daily.get(d, 0) for d in spark_days]
+        # sync health: warn when the last sync is older than a day
+        stale = True
+        if c.get("last_synced_at"):
+            try:
+                stale = (now - _datetime.fromisoformat(c["last_synced_at"])).total_seconds() > 86400
+            except ValueError:
+                pass
+        r30_spend, r30_leads = c.get("r30_spend"), c.get("r30_leads")
+        avg_cpl = (r30_spend / r30_leads) if (r30_spend and r30_leads) else None
+        row = {
+            "client": c,
+            "leads_7d": s.get("leads_7d", 0),
+            "leads_30d": s.get("leads_30d", 0),
+            "missed_7d": s.get("missed_7d", 0),
+            "spam_30d": s.get("spam_30d", 0),
+            "impressions_7d": s.get("impressions_7d", 0),
+            "spark": spark,
+            "spark_max": max(spark) if any(spark) else 1,
+            "stale": stale,
+            "avg_cpl": avg_cpl,
+        }
+        (active if c.get("is_active", 1) else inactive).append(row)
+
+    # busiest accounts first
+    active.sort(key=lambda r: r["leads_30d"], reverse=True)
+
+    return templates.TemplateResponse(request, "agency_dashboard.html", {
+        **ctx,
+        "active_rows": active,
+        "inactive_rows": inactive,
+        "totals": {
+            "leads_7d": sum(r["leads_7d"] for r in active),
+            "leads_30d": sum(r["leads_30d"] for r in active),
+            "spend_30d": sum(r["client"].get("r30_spend") or 0 for r in active),
+            "impressions_7d": sum(r["impressions_7d"] for r in active),
+            "spam_30d": sum(r["spam_30d"] for r in active),
+        },
+    })
+
+
+@app.post("/admin/clients/{client_id}/toggle-active")
+async def toggle_client_active(request: Request, client_id: int, _csrf: None = Depends(_csrf_form)):
+    if not _is_admin(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    client = await get_client(client_id)
+    if not client:
+        raise HTTPException(status_code=404)
+    await update_client(client_id, {"is_active": 0 if client.get("is_active", 1) else 1})
+    return RedirectResponse("/admin/dashboard", status_code=302)
+
+
 # ── Admin: dashboard ──────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -1074,7 +1224,7 @@ async def scan_all_clients(request: Request, background_tasks: BackgroundTasks, 
     if _scan_state["running"]:
         raise HTTPException(status_code=409, detail="Scan already in progress.")
     clients = await get_all_clients()
-    eligible = [c for c in clients if c.get("lead_list_url") and not c.get("is_demo")]
+    eligible = [c for c in clients if c.get("lead_list_url") and not c.get("is_demo") and c.get("is_active", 1)]
     if not eligible:
         raise HTTPException(status_code=400, detail="No clients have a lead list URL configured.")
     background_tasks.add_task(_scan_all_clients_task, eligible)

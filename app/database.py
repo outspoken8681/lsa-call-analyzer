@@ -96,6 +96,8 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_name TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_lookup_json TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS spam_score INTEGER;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS spam_reasons TEXT;
+-- JSON list of {check, status, detail} describing every spam signal evaluated.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS spam_signals TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_password_plain TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_synced_at TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_sync_new_leads INTEGER;
@@ -106,6 +108,9 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS business_type TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS google_account_id TEXT;
 -- Demo/sandbox accounts: excluded from scraping, syncing, and phone lookups.
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS is_demo INTEGER DEFAULT 0;
+-- Dormant accounts can be toggled off: hidden from the agency dashboard and
+-- excluded from auto-sync / lookup tracking until reactivated.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1;
 -- Rolling 30-day Reports snapshot (spend + charged leads), refreshed on sync.
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_spend REAL;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_leads INTEGER;
@@ -501,6 +506,55 @@ async def save_auth_state(json_text: str) -> None:
 
 async def load_auth_state() -> Optional[str]:
     return await get_setting(AUTH_STATE_KEY)
+
+
+# ── Agency dashboard aggregates ───────────────────────────────────────────────
+
+async def get_agency_stats(d7: str, d30: str, d14: str) -> dict[int, dict]:
+    """
+    Per-client aggregates for the agency dashboard, keyed by client_id.
+    d7/d30/d14 are ISO date floors (call_date is stored as ISO text, so string
+    comparison is chronological).
+    """
+    stats: dict[int, dict] = {}
+
+    def bucket(cid: int) -> dict:
+        return stats.setdefault(cid, {
+            "leads_7d": 0, "leads_30d": 0, "missed_7d": 0,
+            "spam_30d": 0, "impressions_7d": 0, "daily": {},
+        })
+
+    async with _get_pool().acquire() as conn:
+        for r in await conn.fetch(
+            """SELECT client_id,
+                      COUNT(*) FILTER (WHERE call_date >= $1)                          AS leads_7d,
+                      COUNT(*) FILTER (WHERE call_date >= $2)                          AS leads_30d,
+                      COUNT(*) FILTER (WHERE call_date >= $1 AND is_answered = 0
+                                        AND (lead_type IS NULL OR lead_type != 'message')) AS missed_7d,
+                      COUNT(*) FILTER (WHERE call_date >= $2 AND spam_score >= 70)     AS spam_30d
+               FROM leads WHERE call_date >= $2 GROUP BY client_id""",
+            d7, d30,
+        ):
+            b = bucket(r["client_id"])
+            b.update(leads_7d=r["leads_7d"], leads_30d=r["leads_30d"],
+                     missed_7d=r["missed_7d"], spam_30d=r["spam_30d"])
+
+        for r in await conn.fetch(
+            """SELECT client_id, LEFT(call_date, 10) AS day, COUNT(*) AS n
+               FROM leads WHERE call_date >= $1
+               GROUP BY client_id, LEFT(call_date, 10)""",
+            d14,
+        ):
+            bucket(r["client_id"])["daily"][r["day"]] = r["n"]
+
+        for r in await conn.fetch(
+            """SELECT client_id, COALESCE(SUM(impressions), 0) AS imp
+               FROM daily_metrics WHERE date >= $1 GROUP BY client_id""",
+            d7,
+        ):
+            bucket(r["client_id"])["impressions_7d"] = r["imp"]
+
+    return stats
 
 
 # ── Daily metrics (ad impressions per day) ────────────────────────────────────
