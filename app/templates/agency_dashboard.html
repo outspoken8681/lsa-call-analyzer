@@ -64,7 +64,8 @@
       </thead>
       <tbody>
         {% for r in active_rows %}
-        <tr>
+        <tr onclick="this.querySelector('form.select-form').submit()" style="cursor:pointer"
+            title="Open {{ r.client.name }}">
           <td>
             <div class="fw-medium">{{ r.client.name }}</div>
             {% if r.client.google_account_id %}<small class="text-muted font-monospace">#{{ r.client.google_account_id }}</small>{% endif %}
@@ -94,8 +95,8 @@
               <span class="badge bg-success" title="Last synced: {{ r.client.last_synced_at }}">OK</span>
             {% endif %}
           </td>
-          <td class="text-end text-nowrap">
-            <form method="post" action="/admin/clients/{{ r.client.id }}/select" class="d-inline m-0">
+          <td class="text-end text-nowrap" onclick="event.stopPropagation()">
+            <form method="post" action="/admin/clients/{{ r.client.id }}/select" class="select-form d-inline m-0">
               <input type="hidden" name="csrf_token">
               <button type="submit" class="btn btn-sm btn-outline-primary py-0">View</button>
             </form>
