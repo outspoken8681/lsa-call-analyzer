@@ -24,7 +24,10 @@ logger = logging.getLogger(__name__)
 # which must never land in server logs. Quiet it down.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-IPQS_API_KEY = os.getenv("IPQS_API_KEY", "").strip()
+# Strip ALL whitespace, not just the ends: a line break pasted into the middle
+# of the env var (seen in Railway) corrupts the request URL and silently breaks
+# every lookup. Real IPQS keys never contain whitespace.
+IPQS_API_KEY = re.sub(r"\s+", "", os.getenv("IPQS_API_KEY", ""))
 _IPQS_URL = "https://www.ipqualityscore.com/api/json/phone/{key}/{number}"
 
 _EXT_RE = re.compile(r'\bext\.?\s*\d+', re.I)
