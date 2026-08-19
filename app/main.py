@@ -259,6 +259,12 @@ async def lifespan(app: FastAPI):
     )
     _scheduler.start()
     logger.info("[scheduler] Webhook retry checker active (every 5 min).")
+    from app import phone_lookup as _pl
+    if _pl.enabled():
+        logger.info("[phone-lookup] IPQS enabled — caller reputation checks active.")
+    else:
+        logger.warning("[phone-lookup] IPQS_API_KEY not set in this environment — "
+                       "caller reputation checks are DISABLED.")
     await _roll_demo_dates()   # also catch up immediately on boot
     yield
     if _scheduler.running:
@@ -1783,6 +1789,8 @@ async def admin_status(request: Request):
         for c in clients
     ]
 
+    from app import phone_lookup as _pl
+    import time as _t
     return {
         "sync_enabled":          SYNC_ENABLED,
         "google_authenticated":  google_ok,
@@ -1790,6 +1798,10 @@ async def admin_status(request: Request):
         "next_auto_sync_runs":   next_runs,
         "scan_in_progress":      _scan_state["running"],
         "scan_current":          _scan_state.get("current") or None,
+        # Phone-reputation (IPQS) health: enabled = API key present in this
+        # environment; paused = daily quota exhausted, retrying later.
+        "ipqs_enabled":          _pl.enabled(),
+        "ipqs_paused_for_quota": _t.time() < _pl._quota_blocked_until,
         "client_count":          len(clients),
         "clients":               client_status,
         "server_time":           _datetime.now(_timezone.utc).isoformat(),
