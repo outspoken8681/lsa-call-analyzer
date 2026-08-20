@@ -3,6 +3,7 @@
 {% block title %}{% if portal_mode %}{{ current_client.name }} — Call Reports{% else %}Dashboard — LSA Call Analyzer{% endif %}{% endblock %}
 
 {% set lead_base = '/portal/' + portal_slug + '/leads' if portal_mode else '/leads' %}
+{% set export_url = '/portal/' + portal_slug + '/export/leads.csv' if portal_mode else '/export/leads.csv' %}
 
 {% block nav_extra %}
   {% if not portal_mode and current_client and current_client.lead_list_url %}
@@ -190,8 +191,8 @@
 <form id="filter-form" method="get" action="{{ lead_base }}">
   <input type="hidden" name="page" value="1">
 
-  <div class="mb-3" style="max-width:420px;">
-    <div class="input-group input-group-sm">
+  <div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
+    <div class="input-group input-group-sm" style="max-width:420px;">
       <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
       <input type="search" name="q" value="{{ search_query }}" class="form-control"
              placeholder="Search name, phone, location, transcript…" autocomplete="off">
@@ -203,6 +204,11 @@
       <a href="{{ lead_base }}?page=1{{ ns.qs }}" class="btn btn-outline-secondary" title="Clear search"><i class="bi bi-x-lg"></i></a>
       {% endif %}
     </div>
+    <a href="{{ export_url }}{% if filter_qs %}?{{ filter_qs[1:] }}{% endif %}"
+       class="btn btn-sm btn-outline-secondary"
+       title="Download these leads as a CSV spreadsheet{% if filter_qs %} (current filters applied){% endif %}">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </a>
   </div>
 
   <div class="d-flex align-items-center gap-3 flex-wrap mb-3">

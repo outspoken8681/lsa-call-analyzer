@@ -1254,6 +1254,65 @@ async def _scan_all_clients_task(clients: list[dict]):
     logger.info(f"[scan-all] All {len(clients)} client(s) scanned.")
 
 
+def _leads_csv_response(client: dict, leads: list[dict]) -> Response:
+    """Build a CSV download of a client's leads (one row per lead)."""
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([
+        "Lead ID", "Date", "Type", "Answered", "Caller Name", "Contact Name",
+        "Phone", "Location", "Job Type", "Duration (sec)", "Charge Status",
+        "Lead Score (1-5)", "Spam Verdict", "Spam Score (0-100)", "Spam Reasons",
+        "Service Requested", "Follow-up Required", "Follow-up Notes",
+        "Summary", "Transcript",
+    ])
+    for l in leads:
+        try:
+            ad = json.loads(l.get("analysis_json") or "{}")
+        except Exception:
+            ad = {}
+        answered = ("Message" if l.get("lead_type") == "message"
+                    else "Yes" if l.get("is_answered") == 1
+                    else "Missed" if l.get("is_answered") == 0 else "")
+        w.writerow([
+            l.get("id"), l.get("call_date"), l.get("lead_type") or "phone", answered,
+            l.get("caller_name"), l.get("contact_name"), l.get("caller_phone"),
+            l.get("location"), l.get("job_type"), l.get("call_duration_seconds"),
+            l.get("charge_status"), l.get("qualification_score"),
+            _spam_verdict(l.get("spam_score")), l.get("spam_score"), l.get("spam_reasons"),
+            ad.get("service_requested"),
+            {True: "Yes", False: "No"}.get(ad.get("follow_up_required"), ""),
+            ad.get("follow_up_notes"), l.get("call_summary"), l.get("transcript"),
+        ])
+    today = _datetime.now(_EASTERN).date().isoformat()
+    filename = f"{client['slug']}-leads-{today}.csv"
+    # BOM so Excel opens UTF-8 content correctly
+    return Response(
+        content="\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/export/leads.csv")
+async def export_leads_csv(request: Request):
+    """CSV of the current account's leads, honouring active filters + search."""
+    if not _is_admin(request):
+        raise HTTPException(status_code=403)
+    ctx = await _admin_context(request)
+    client = ctx["current_client"]
+    if not client:
+        raise HTTPException(status_code=400, detail="No client selected.")
+    leads = await get_all_leads(
+        client["id"], limit=10000, offset=0,
+        filter_answered=request.query_params.getlist("answered") or None,
+        filter_charged=request.query_params.getlist("charged") or None,
+        search=(request.query_params.get("q") or "").strip() or None,
+    )
+    return _leads_csv_response(client, leads)
+
+
 @app.get("/leads", response_class=HTMLResponse)
 async def dashboard(request: Request, page: int = 1):
     if not _is_admin(request):
@@ -1634,6 +1693,23 @@ async def portal_login(request: Request, slug: str, password: str = Form(...), n
         return response
     _record_login_failure(key)
     return templates.TemplateResponse(request, "portal_login.html", {"client": client, "next": dest, "error": "Incorrect password"}, status_code=401)
+
+
+@app.get("/portal/{slug}/export/leads.csv")
+async def portal_export_leads_csv(request: Request, slug: str):
+    """Client-facing CSV export, honouring the portal's active filters + search."""
+    if _portal_slug(request) != slug:
+        raise HTTPException(status_code=403, detail="Not authenticated")
+    client = await get_client_by_slug(slug)
+    if not client:
+        raise HTTPException(status_code=404, detail="Portal not found")
+    leads = await get_all_leads(
+        client["id"], limit=10000, offset=0,
+        filter_answered=request.query_params.getlist("answered") or None,
+        filter_charged=request.query_params.getlist("charged") or None,
+        search=(request.query_params.get("q") or "").strip() or None,
+    )
+    return _leads_csv_response(client, leads)
 
 
 @app.get("/portal/{slug}/leads", response_class=HTMLResponse)
