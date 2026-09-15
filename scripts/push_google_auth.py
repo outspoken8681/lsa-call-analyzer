@@ -54,10 +54,16 @@ async def main() -> int:
         return 1
 
     print(f"Target app: {APP_URL}")
-    print("Opening Chromium — sign in to Google and navigate to your LSA leads/account picker.")
+    print("Opening Chrome — sign in to Google and navigate to your LSA leads/account picker.")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=100)
+        # Use the real installed Google Chrome (Google's login flow trusts it far
+        # more than bare Chromium). Fall back to bundled Chromium if not found.
+        try:
+            browser = await p.chromium.launch(channel="chrome", headless=False, slow_mo=100)
+        except Exception:
+            print("Google Chrome not found — falling back to bundled Chromium.")
+            browser = await p.chromium.launch(headless=False, slow_mo=100)
         context = await browser.new_context()
         page = await context.new_page()
         await page.goto(LSA_URL)

@@ -90,7 +90,14 @@ async def open_login_browser():
     _login_event = asyncio.Event()
 
     p = await async_playwright().start()
-    _login_browser = await p.chromium.launch(headless=False, slow_mo=100)
+    # Real installed Chrome for the interactive login — Google's sign-in flow is
+    # far less suspicious of it than bare Chromium. Headless scraping elsewhere
+    # still uses bundled Chromium (Chrome isn't installed on the server).
+    try:
+        _login_browser = await p.chromium.launch(channel="chrome", headless=False, slow_mo=100)
+    except Exception:
+        logger.warning("Google Chrome not found — falling back to bundled Chromium for login.")
+        _login_browser = await p.chromium.launch(headless=False, slow_mo=100)
     _login_context = await _login_browser.new_context()
     _login_page = await _login_context.new_page()
     await _login_page.goto(LSA_BASE_URL)
