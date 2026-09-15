@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime as _datetime, timedelta, timezone as _timezone
@@ -1620,6 +1621,38 @@ async def remove_lead(request: Request, lead_id: str, _csrf: None = Depends(_csr
     return {"message": f"Lead {lead_id} deleted"}
 
 
+def _range_audio_response(request: Request, data: bytes, headers: dict) -> Response:
+    """
+    Serve audio bytes with HTTP Range support. Without Accept-Ranges/206
+    responses, browsers disable seeking on the <audio> player — dragging the
+    playhead does nothing.
+    """
+    total = len(data)
+    headers = {**headers, "Accept-Ranges": "bytes"}
+    range_header = request.headers.get("range", "")
+    m = re.match(r"bytes=(\d*)-(\d*)$", range_header.strip())
+    if m and (m.group(1) or m.group(2)):
+        if m.group(1):
+            start = int(m.group(1))
+            end = min(int(m.group(2)), total - 1) if m.group(2) else total - 1
+        else:  # suffix range: last N bytes
+            start = max(total - int(m.group(2)), 0)
+            end = total - 1
+        if start >= total or start > end:
+            return Response(
+                status_code=416,
+                headers={**headers, "Content-Range": f"bytes */{total}"},
+            )
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+        return Response(
+            content=data[start:end + 1],
+            status_code=206,
+            media_type="audio/mpeg",
+            headers=headers,
+        )
+    return Response(content=data, media_type="audio/mpeg", headers=headers)
+
+
 @app.get("/audio/{lead_id}")
 async def serve_audio(request: Request, lead_id: str, download: bool = False, token: str | None = None):
     # Two ways in: a signed audio token (used by CRM webhook consumers) that
@@ -1642,11 +1675,11 @@ async def serve_audio(request: Request, lead_id: str, download: bool = False, to
         headers["Content-Disposition"] = f'attachment; filename="{name}.mp3"'
     path = Path(lead["audio_path"]) if lead.get("audio_path") else None
     if path and path.exists():
-        return FileResponse(path, media_type="audio/mpeg", headers=headers)
+        return _range_audio_response(request, path.read_bytes(), headers)
     if lead.get("audio_url"):
         data = await r2_get_audio(lead["audio_url"])
         if data:
-            return Response(content=data, media_type="audio/mpeg", headers=headers)
+            return _range_audio_response(request, data, headers)
     raise HTTPException(status_code=404, detail="Audio not found")
 
 
@@ -1799,11 +1832,11 @@ async def portal_audio(request: Request, slug: str, lead_id: str, download: bool
         headers["Content-Disposition"] = f'attachment; filename="{name}.mp3"'
     path = Path(lead["audio_path"]) if lead.get("audio_path") else None
     if path and path.exists():
-        return FileResponse(path, media_type="audio/mpeg", headers=headers)
+        return _range_audio_response(request, path.read_bytes(), headers)
     if lead.get("audio_url"):
         data = await r2_get_audio(lead["audio_url"])
         if data:
-            return Response(content=data, media_type="audio/mpeg", headers=headers)
+            return _range_audio_response(request, data, headers)
     raise HTTPException(status_code=404, detail="Audio not found")
 
 
