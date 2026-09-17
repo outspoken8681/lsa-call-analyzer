@@ -1155,6 +1155,7 @@ async def agency_dashboard(request: Request):
         # sync health: warn when the last sync is older than a day
         stale = True
         synced_label = "never"
+        age = None
         if c.get("last_synced_at"):
             try:
                 age = (now - _datetime.fromisoformat(c["last_synced_at"])).total_seconds()
@@ -1180,12 +1181,13 @@ async def agency_dashboard(request: Request):
             "spark_max": max(spark) if any(spark) else 1,
             "stale": stale,
             "synced_label": synced_label,
+            "synced_age": age,
             "avg_cpl": avg_cpl,
         }
         (active if c.get("is_active", 1) else inactive).append(row)
 
-    # busiest accounts first
-    active.sort(key=lambda r: r["leads_30d"], reverse=True)
+    # alphabetical by default; the table is re-sortable client-side
+    active.sort(key=lambda r: r["client"]["name"].lower())
 
     return templates.TemplateResponse(request, "agency_dashboard.html", {
         **ctx,

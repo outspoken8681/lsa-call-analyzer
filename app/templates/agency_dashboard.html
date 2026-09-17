@@ -52,26 +52,35 @@
 {# ── Active accounts ───────────────────────────────────────────────────────── #}
 <div class="card border-0 shadow-sm">
   <div class="table-responsive">
-    <table class="table table-hover mb-0 align-middle">
+    <table class="table table-hover mb-0 align-middle" id="agency-table">
       <thead class="table-light">
         <tr>
-          <th>Account</th>
+          <th class="sortable" data-key="name" data-type="text">Account</th>
           <th style="min-width:130px;">Last 14 days</th>
-          <th class="text-end">Impr. 7d</th>
-          <th class="text-end">Leads 7d</th>
-          <th class="text-end">Missed 7d</th>
-          <th class="text-end">Leads 30d</th>
-          <th class="text-end">Spend 30d</th>
-          <th class="text-end">Avg $/Lead</th>
-          <th class="text-end">Spam 30d</th>
-          <th>Synced</th>
+          <th class="text-end sortable" data-key="impr">Impr. 7d</th>
+          <th class="text-end sortable" data-key="leads7">Leads 7d</th>
+          <th class="text-end sortable" data-key="missed">Missed 7d</th>
+          <th class="text-end sortable" data-key="leads30">Leads 30d</th>
+          <th class="text-end sortable" data-key="spend">Spend 30d</th>
+          <th class="text-end sortable" data-key="cpl">Avg $/Lead</th>
+          <th class="text-end sortable" data-key="spam">Spam 30d</th>
+          <th class="sortable" data-key="synced">Synced</th>
           <th class="text-end"></th>
         </tr>
       </thead>
       <tbody>
         {% for r in active_rows %}
         <tr onclick="this.querySelector('form.select-form').submit()" style="cursor:pointer"
-            title="Open {{ r.client.name }}">
+            title="Open {{ r.client.name }}"
+            data-name="{{ r.client.name | lower }}"
+            data-impr="{{ r.impressions_7d }}"
+            data-leads7="{{ r.leads_7d }}"
+            data-missed="{{ r.missed_7d }}"
+            data-leads30="{{ r.leads_30d }}"
+            data-spend="{{ r.client.r30_spend if r.client.r30_spend is not none else '' }}"
+            data-cpl="{{ r.avg_cpl if r.avg_cpl else '' }}"
+            data-spam="{{ r.spam_30d }}"
+            data-synced="{{ r.synced_age if r.synced_age is not none else '' }}">
           <td>
             <div class="fw-medium">{{ r.client.name }}</div>
             {% if r.client.google_account_id %}<small class="text-muted font-monospace">#{{ r.client.google_account_id }}</small>{% endif %}
@@ -147,7 +156,57 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+  #agency-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  #agency-table th.sortable:hover { color: var(--tt-slate, #334155); }
+  #agency-table th.sortable::after { content: "\2195"; opacity: .3; margin-left: .3em; font-size: .8em; }
+  #agency-table th.sortable.asc::after  { content: "\2191"; opacity: 1; }
+  #agency-table th.sortable.desc::after { content: "\2193"; opacity: 1; }
+</style>
 <script>
 {% include "_scan_all_js.html" %}
+
+// ── Column sorting ────────────────────────────────────────────────────────────
+(function () {
+  const table = document.getElementById('agency-table');
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+  const headers = table.querySelectorAll('th.sortable');
+  const STORE = 'agencySort';
+
+  function sortBy(key, dir) {
+    const isText = key === 'name';
+    const rows = Array.from(tbody.querySelectorAll('tr[data-name]'));
+    rows.sort((a, b) => {
+      const av = a.dataset[key], bv = b.dataset[key];
+      // Blanks (no data / never synced) always sink to the bottom.
+      if (av === '' && bv === '') return 0;
+      if (av === '') return 1;
+      if (bv === '') return -1;
+      const cmp = isText ? av.localeCompare(bv) : Number(av) - Number(bv);
+      return dir === 'asc' ? cmp : -cmp;
+    });
+    rows.forEach(r => tbody.appendChild(r));
+    headers.forEach(h => {
+      h.classList.remove('asc', 'desc');
+      if (h.dataset.key === key) h.classList.add(dir);
+    });
+    try { localStorage.setItem(STORE, JSON.stringify({ key, dir })); } catch (e) {}
+  }
+
+  headers.forEach(h => h.addEventListener('click', () => {
+    const key = h.dataset.key;
+    let dir;
+    if (h.classList.contains('asc')) dir = 'desc';
+    else if (h.classList.contains('desc')) dir = 'asc';
+    // First click: text A→Z, numbers biggest-first, synced most-recent-first.
+    else dir = (key === 'name' || key === 'synced') ? 'asc' : 'desc';
+    sortBy(key, dir);
+  }));
+
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STORE)); } catch (e) {}
+  sortBy(saved && saved.key ? saved.key : 'name', saved && saved.dir ? saved.dir : 'asc');
+})();
 </script>
 {% endblock %}
