@@ -3,10 +3,16 @@
 {% block title %}Agency Dashboard — LSA Call Analyzer{% endblock %}
 
 {% block nav_extra %}
+  {% if sync_enabled %}
+  <button class="btn btn-sm btn-light" id="btn-scan-all" onclick="scanAll()">
+    <i class="bi bi-arrow-repeat me-1"></i>Scan All Accounts
+  </button>
+  {% endif %}
   <a href="/admin/clients" class="btn btn-sm btn-light"><i class="bi bi-gear me-1"></i>Manage Clients</a>
 {% endblock %}
 
 {% block content %}
+{% include "_scan_all_progress.html" %}
 <div class="d-flex align-items-center justify-content-between mb-3">
   <div>
     <h4 class="mb-0 fw-semibold">Agency Dashboard</h4>
@@ -51,12 +57,12 @@
         <tr>
           <th>Account</th>
           <th style="min-width:130px;">Last 14 days</th>
+          <th class="text-end">Impr. 7d</th>
           <th class="text-end">Leads 7d</th>
           <th class="text-end">Missed 7d</th>
           <th class="text-end">Leads 30d</th>
           <th class="text-end">Spend 30d</th>
           <th class="text-end">Avg $/Lead</th>
-          <th class="text-end">Impr. 7d</th>
           <th class="text-end">Spam 30d</th>
           <th>Synced</th>
           <th class="text-end"></th>
@@ -79,20 +85,20 @@
               {% endfor %}
             </div>
           </td>
+          <td class="text-end">{{ '{:,}'.format(r.impressions_7d) }}</td>
           <td class="text-end fw-semibold">{{ r.leads_7d }}</td>
           <td class="text-end {% if r.missed_7d %}text-danger{% else %}text-muted{% endif %}">{{ r.missed_7d }}</td>
           <td class="text-end">{{ r.leads_30d }}</td>
           <td class="text-end">{% if r.client.r30_spend is not none %}${{ '{:,.2f}'.format(r.client.r30_spend) }}{% else %}—{% endif %}</td>
           <td class="text-end">{% if r.avg_cpl %}${{ '{:,.2f}'.format(r.avg_cpl) }}{% else %}—{% endif %}</td>
-          <td class="text-end">{{ '{:,}'.format(r.impressions_7d) }}</td>
           <td class="text-end">
             {% if r.spam_30d %}<span class="badge bg-danger">{{ r.spam_30d }}</span>{% else %}<span class="text-muted">0</span>{% endif %}
           </td>
           <td>
             {% if r.stale %}
-              <span class="badge bg-warning text-dark" title="Last synced: {{ r.client.last_synced_at or 'never' }}">Stale</span>
+              <span class="badge bg-warning text-dark text-nowrap" title="Last synced: {{ r.client.last_synced_at or 'never' }}">{{ r.synced_label }}</span>
             {% else %}
-              <span class="badge bg-success" title="Last synced: {{ r.client.last_synced_at }}">OK</span>
+              <span class="text-muted small text-nowrap" title="Last synced: {{ r.client.last_synced_at }}">{{ r.synced_label }}</span>
             {% endif %}
           </td>
           <td class="text-end text-nowrap" onclick="event.stopPropagation()">
@@ -138,4 +144,10 @@
   </div>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% include "_scan_all_js.html" %}
+</script>
 {% endblock %}

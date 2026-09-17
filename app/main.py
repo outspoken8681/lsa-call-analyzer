@@ -1154,11 +1154,19 @@ async def agency_dashboard(request: Request):
         spark = [daily.get(d, 0) for d in spark_days]
         # sync health: warn when the last sync is older than a day
         stale = True
+        synced_label = "never"
         if c.get("last_synced_at"):
             try:
-                stale = (now - _datetime.fromisoformat(c["last_synced_at"])).total_seconds() > 86400
+                age = (now - _datetime.fromisoformat(c["last_synced_at"])).total_seconds()
+                stale = age > 86400
+                if age < 3600:
+                    synced_label = f"{max(int(age // 60), 1)}m ago"
+                elif age < 86400:
+                    synced_label = f"{int(age // 3600)}h ago"
+                else:
+                    synced_label = f"{int(age // 86400)}d ago"
             except ValueError:
-                pass
+                synced_label = str(c["last_synced_at"])
         r30_spend, r30_leads = c.get("r30_spend"), c.get("r30_leads")
         avg_cpl = (r30_spend / r30_leads) if (r30_spend and r30_leads) else None
         row = {
@@ -1171,6 +1179,7 @@ async def agency_dashboard(request: Request):
             "spark": spark,
             "spark_max": max(spark) if any(spark) else 1,
             "stale": stale,
+            "synced_label": synced_label,
             "avg_cpl": avg_cpl,
         }
         (active if c.get("is_active", 1) else inactive).append(row)

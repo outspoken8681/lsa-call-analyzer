@@ -16,15 +16,7 @@
   <h4 class="mb-0 fw-semibold">Manage Clients</h4>
 </div>
 
-<div id="scan-progress" class="alert alert-primary d-none mb-4" role="alert">
-  <div class="d-flex align-items-center gap-3">
-    <div class="spinner-border spinner-border-sm flex-shrink-0" role="status"></div>
-    <div>
-      <strong id="scan-headline">Scanning accounts…</strong>
-      <div class="small mt-1" id="scan-detail"></div>
-    </div>
-  </div>
-</div>
+{% include "_scan_all_progress.html" %}
 
 <div class="row g-4">
 
@@ -191,82 +183,8 @@
 
 {% block scripts %}
 <script>
-{% if sync_enabled %}
-// ── Scan-all polling ──────────────────────────────────────────────────────────
-let _scanPoller = null;
+{% include "_scan_all_js.html" %}
 
-async function scanAll() {
-  const btn = document.getElementById('btn-scan-all');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Starting…';
-
-  const res = await fetch('/admin/scan-all', { method: 'POST', headers: csrfHeaders() });
-  const data = await res.json();
-  if (!res.ok) {
-    alert(data.detail || 'Could not start scan.');
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Scan All Accounts';
-    return;
-  }
-  startPolling();
-}
-
-function startPolling() {
-  if (_scanPoller) return;
-  _scanPoller = setInterval(pollStatus, 5000);
-  pollStatus();
-}
-
-async function pollStatus() {
-  try {
-    const res = await fetch('/admin/scan-status');
-    const s = await res.json();
-    const progress = document.getElementById('scan-progress');
-    const headline = document.getElementById('scan-headline');
-    const detail = document.getElementById('scan-detail');
-    const btn = document.getElementById('btn-scan-all');
-
-    if (s.running) {
-      progress.classList.remove('d-none');
-      headline.textContent = `Scanning: ${s.current}`;
-      detail.textContent = s.done.length > 0
-        ? `Done: ${s.done.join(', ')} — ${s.done.length} of ${s.total} complete`
-        : `0 of ${s.total} complete`;
-      btn.disabled = true;
-      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning…';
-    } else {
-      // Finished
-      clearInterval(_scanPoller);
-      _scanPoller = null;
-      progress.classList.add('d-none');
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Scan All Accounts';
-      if (s.total > 0) {
-        alert(`Scan complete — ${s.total} account(s) updated.`);
-        s.total = 0;  // reset display
-      }
-    }
-  } catch (e) {
-    // network blip, retry next tick
-  }
-}
-
-// On page load: check once. Only start polling if a scan is actively running.
-(async () => {
-  try {
-    const res = await fetch('/admin/scan-status');
-    const s = await res.json();
-    if (s.running) {
-      // Show progress immediately, then start polling
-      document.getElementById('scan-progress').classList.remove('d-none');
-      document.getElementById('scan-headline').textContent = `Scanning: ${s.current}`;
-      const btn = document.getElementById('btn-scan-all');
-      if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning…'; }
-      startPolling();
-    }
-  } catch (e) {}
-})();
-{% endif %}
 
 function genWebhookSecret(clientId) {
   const arr = new Uint8Array(32);
