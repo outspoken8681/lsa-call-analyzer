@@ -42,8 +42,11 @@ from app.database import (
     get_webhook_deliveries_for_lead,
     get_webhook_delivery,
     get_setting_updated_at,
+    get_setting,
+    set_setting,
     get_daily_metrics,
     get_all_caller_phones,
+    find_cached_phone_lookup,
     get_agency_stats,
     get_max_lead_date,
     shift_client_dates,
@@ -470,9 +473,20 @@ async def _score_spam(client_id: int, lead_id: str) -> None:
             except Exception:
                 lookup = None
         elif lead.get("caller_phone"):
-            lookup = await lookup_phone_reputation(lead["caller_phone"])
-            if lookup:
-                updates["phone_lookup_json"] = phone_lookup_to_json(lookup)
+            # Same number already rated on another lead (any account)? Reuse it
+            # — repeat callers must never cost a second API credit.
+            digits, had_ext = normalize_phone(lead["caller_phone"])
+            cached = await find_cached_phone_lookup(digits) if digits and not had_ext else None
+            if cached:
+                try:
+                    lookup = json.loads(cached)
+                    updates["phone_lookup_json"] = cached
+                except Exception:
+                    lookup = None
+            if lookup is None:
+                lookup = await lookup_phone_reputation(lead["caller_phone"])
+                if lookup:
+                    updates["phone_lookup_json"] = phone_lookup_to_json(lookup)
         # Does the lead itself look like a real inquiry? A usable service request
         # plus a non-bottom quality score is strong evidence of a genuine customer,
         # and must outweigh weak number-reputation signals — plenty of real people
@@ -579,18 +593,23 @@ async def _roll_demo_dates() -> None:
         logger.warning(f"[demo] Date roll-forward failed: {e}")
 
 
-async def _drip_phone_lookups(max_lookups: int = 25) -> None:
+async def _drip_phone_lookups(max_lookups: int = 20) -> None:
     """
     Spend leftover daily IPQS quota rating historical leads that never got a
-    number lookup (the free tier allows ~35/day; new leads use some, this
-    drip uses the rest). Newest calls first, across all clients. Stops the
-    moment quota is exhausted. Self-healing: once history is covered this
+    number lookup. Runs at most ONCE per calendar day, spends at most
+    `max_lookups` attempts (the free tier is 35/day; the rest is left for new
+    leads), and stops at the first sign of a quota/credit refusal. Newest calls
+    first, across all clients. Self-healing: once history is covered this
     no-ops. Never raises.
     """
     from app import phone_lookup as _pl
-    if not _pl.enabled():
+    if not _pl.enabled() or _pl.blocked():
         return
     try:
+        today = _datetime.now(_EASTERN).date().isoformat()
+        if await get_setting("phone_drip_last_date") == today:
+            return
+        await set_setting("phone_drip_last_date", today)
         candidates: list[tuple[str, int, str]] = []  # (call_date, client_id, lead_id)
         for c in await get_all_clients():
             if c.get("is_demo") or not c.get("is_active", 1):
@@ -605,16 +624,22 @@ async def _drip_phone_lookups(max_lookups: int = 25) -> None:
         if not candidates:
             return
         candidates.sort(reverse=True)  # newest first
-        done = 0
-        for _, cid, lid in candidates[:max_lookups * 2]:  # headroom for failures
-            if done >= max_lookups or _pl._quota_blocked_until > 0:
+        done = failures = 0
+        # Hard cap on ATTEMPTS, not successes — a failed attempt still costs a
+        # credit, so there is no such thing as free headroom.
+        for _, cid, lid in candidates[:max_lookups]:
+            if _pl.blocked() or failures >= 2:
                 break
             await _score_spam(cid, lid)
             lead = await get_lead(cid, lid)
             if lead and lead.get("phone_lookup_json"):
                 done += 1
+                failures = 0
+            else:
+                failures += 1
         logger.info(f"[spam] Lookup drip: rated {done} historical number(s), "
-                    f"{len(candidates) - done} still pending.")
+                    f"{len(candidates) - done} still pending"
+                    f"{' — paused (quota/credits)' if _pl.blocked() else ''}.")
     except Exception as e:
         logger.warning(f"[spam] Lookup drip failed: {e}")
 

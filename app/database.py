@@ -476,6 +476,22 @@ async def get_all_caller_phones() -> list[tuple[int, str]]:
         return [(r["client_id"], r["caller_phone"]) for r in rows]
 
 
+async def find_cached_phone_lookup(digits: str) -> Optional[str]:
+    """
+    Reuse an existing reputation lookup for the same number from any lead in
+    any account, so a repeat caller never costs a second API credit.
+    `digits` is E.164-ish without '+' (11 digits, leading 1).
+    """
+    async with _get_pool().acquire() as conn:
+        return await conn.fetchval(
+            """SELECT phone_lookup_json FROM leads
+               WHERE phone_lookup_json IS NOT NULL
+                 AND regexp_replace(caller_phone, '\\D', '', 'g') IN ($1, $2)
+               LIMIT 1""",
+            digits, digits[1:],
+        )
+
+
 # ── App settings (durable key/value) ──────────────────────────────────────────
 
 async def set_setting(key: str, value: str | None) -> None:

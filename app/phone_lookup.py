@@ -32,13 +32,26 @@ _IPQS_URL = "https://www.ipqualityscore.com/api/json/phone/{key}/{number}"
 
 _EXT_RE = re.compile(r'\bext\.?\s*\d+', re.I)
 
-# When IPQS reports quota exhaustion, stop trying until this timestamp —
-# every further request would just burn time and clutter logs.
+# When IPQS reports quota/credit exhaustion, stop trying until this timestamp.
+# IPQS bills the attempt even when it refuses the lookup, so retrying through
+# an exhausted allowance actively drains the *next* one.
 _quota_blocked_until: float = 0.0
+_BACKOFF_MONTHLY = 24 * 3600   # "insufficient credits" — allowance gone for the month
+_BACKOFF_DAILY = 6 * 3600      # daily cap / rate limit — try again later today
 
 
 def enabled() -> bool:
     return bool(IPQS_API_KEY)
+
+
+def blocked() -> bool:
+    """True while we're backing off after a quota/credit refusal."""
+    return time.time() < _quota_blocked_until
+
+
+def _is_exhaustion_message(msg: str) -> bool:
+    m = msg.lower()
+    return any(w in m for w in ("insufficient credit", "quota", "limit", "exceeded", "upgrade"))
 
 
 def normalize_phone(raw: str | None) -> tuple[Optional[str], bool]:
@@ -89,9 +102,11 @@ async def lookup_phone_reputation(raw_phone: str | None) -> Optional[dict]:
         return None
     if not data.get("success"):
         msg = data.get("message") or ""
-        if "quota" in msg.lower():
-            _quota_blocked_until = time.time() + 3600  # back off an hour
-            logger.warning("[phone-lookup] IPQS daily quota exhausted — pausing lookups for 1h.")
+        if _is_exhaustion_message(msg):
+            monthly = "insufficient credit" in msg.lower()
+            pause = _BACKOFF_MONTHLY if monthly else _BACKOFF_DAILY
+            _quota_blocked_until = time.time() + pause
+            logger.warning(f"[phone-lookup] IPQS refused ({msg!r}) — pausing lookups for {pause // 3600}h.")
         else:
             logger.warning(f"[phone-lookup] IPQS error: {msg}")
         return None
