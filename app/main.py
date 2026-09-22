@@ -47,6 +47,9 @@ from app.database import (
     get_daily_metrics,
     get_all_caller_phones,
     find_cached_phone_lookup,
+    add_account_note,
+    get_account_notes,
+    delete_account_note,
     get_agency_stats,
     get_max_lead_date,
     shift_client_dates,
@@ -1239,6 +1242,38 @@ async def toggle_client_active(request: Request, client_id: int, _csrf: None = D
     return RedirectResponse("/admin/dashboard", status_code=302)
 
 
+# ── Admin: account notes ──────────────────────────────────────────────────────
+
+@app.post("/admin/notes")
+async def add_note(request: Request, note_date: str = Form(...), body: str = Form(...),
+                   _csrf: None = Depends(_csrf_form)):
+    if not _is_admin(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    ctx = await _admin_context(request)
+    client = ctx["current_client"]
+    if not client:
+        raise HTTPException(status_code=400, detail="No client selected.")
+    try:
+        note_date = _datetime.strptime(note_date.strip(), "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date.")
+    body = body.strip()
+    if body:
+        await add_account_note(client["id"], note_date, body[:5000])
+    return RedirectResponse("/leads#account-notes", status_code=302)
+
+
+@app.post("/admin/notes/{note_id}/delete")
+async def delete_note(request: Request, note_id: int, _csrf: None = Depends(_csrf_form)):
+    if not _is_admin(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    ctx = await _admin_context(request)
+    client = ctx["current_client"]
+    if client:
+        await delete_account_note(client["id"], note_id)
+    return RedirectResponse("/leads#account-notes", status_code=302)
+
+
 # ── Admin: dashboard ──────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -1380,9 +1415,22 @@ async def dashboard(request: Request, page: int = 1):
     is_authenticated = await ensure_auth()
     chart_leads_json, chart_days_json, has_impressions = await _get_week_chart_data(client_id)
     failed_webhooks = await get_failed_webhook_count(client_id)
+    notes = await get_account_notes(client_id)
+    notes_by_date: dict[str, list[str]] = {}
+    for n in notes:
+        notes_by_date.setdefault(n["note_date"], []).append(n["body"])
+        ca = n.get("created_at")
+        n["created_label"] = ca.astimezone(_EASTERN).strftime("%-m/%-d/%y %-I:%M %p") if ca else ""
+        try:
+            n["date_label"] = _datetime.strptime(n["note_date"], "%Y-%m-%d").strftime("%a, %b %-d, %Y")
+        except ValueError:
+            n["date_label"] = n["note_date"]
 
     return templates.TemplateResponse(request, "index.html", {
         **ctx,
+        "account_notes": notes,
+        "notes_by_date_json": json.dumps(notes_by_date),
+        "today_iso": _datetime.now(_EASTERN).date().isoformat(),
         "leads": leads,
         "total": total,
         "page": page,

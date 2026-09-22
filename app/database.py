@@ -144,6 +144,15 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (client_id, date)
 );
+
+CREATE TABLE IF NOT EXISTS account_notes (
+    id         SERIAL PRIMARY KEY,
+    client_id  INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    note_date  TEXT    NOT NULL,         -- YYYY-MM-DD the note is about
+    body       TEXT    NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_account_notes_client ON account_notes (client_id, note_date);
 """
 
 # Key under which the Google/Playwright auth state JSON is stored.
@@ -490,6 +499,34 @@ async def find_cached_phone_lookup(digits: str) -> Optional[str]:
                LIMIT 1""",
             digits, digits[1:],
         )
+
+
+# ── Account notes (agency-side annotations on an account's timeline) ─────────
+
+async def add_account_note(client_id: int, note_date: str, body: str) -> int:
+    async with _get_pool().acquire() as conn:
+        return await conn.fetchval(
+            "INSERT INTO account_notes (client_id, note_date, body) VALUES ($1, $2, $3) RETURNING id",
+            client_id, note_date, body,
+        )
+
+
+async def get_account_notes(client_id: int) -> list[dict]:
+    """Newest note date first; within a day, most recently written first."""
+    async with _get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, note_date, body, created_at FROM account_notes "
+            "WHERE client_id = $1 ORDER BY note_date DESC, created_at DESC",
+            client_id,
+        )
+        return [dict(r) for r in rows]
+
+
+async def delete_account_note(client_id: int, note_id: int) -> bool:
+    async with _get_pool().acquire() as conn:
+        res = await conn.execute(
+            "DELETE FROM account_notes WHERE id = $1 AND client_id = $2", note_id, client_id)
+        return res.endswith(" 1")
 
 
 # ── App settings (durable key/value) ──────────────────────────────────────────

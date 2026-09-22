@@ -181,6 +181,64 @@
 {% else %}
 
 {# ── Filter bar ────────────────────────────────────────────────────────────── #}
+{# ── Account notes (agency-only) ─────────────────────────────────────────────── #}
+{% if not portal_mode %}
+<div class="card border-0 shadow-sm mb-3" id="account-notes">
+  <div class="card-body py-2 px-3">
+    <button class="btn btn-link text-decoration-none p-0 w-100 d-flex align-items-center justify-content-between text-reset"
+            type="button" data-bs-toggle="collapse" data-bs-target="#notes-collapse"
+            aria-expanded="false" aria-controls="notes-collapse" id="notes-toggle">
+      <span class="d-flex align-items-center gap-2">
+        <i class="bi bi-journal-text small" style="color:var(--tt-slate)"></i>
+        <span class="small fw-medium">Account notes</span>
+        {% if account_notes %}<span class="badge rounded-pill text-bg-light border">{{ account_notes | length }}</span>{% endif %}
+      </span>
+      <i class="bi bi-chevron-down text-muted" id="notes-chevron"></i>
+    </button>
+
+    <div class="collapse" id="notes-collapse">
+      <form method="post" action="/admin/notes" class="mt-3">
+        <input type="hidden" name="csrf_token">
+        <div class="d-flex align-items-start gap-2 flex-wrap">
+          <input type="date" name="note_date" value="{{ today_iso }}" required
+                 class="form-control form-control-sm" style="max-width:160px;">
+          <textarea name="body" rows="2" required class="form-control form-control-sm" style="flex:1;min-width:240px;"
+                    placeholder="What happened on this date? (budget change, ad paused, client call…)"></textarea>
+          <button type="submit" class="btn btn-sm btn-primary text-nowrap"><i class="bi bi-plus-lg me-1"></i>Add note</button>
+        </div>
+      </form>
+
+      {% if account_notes %}
+      <div class="mt-3 border-top pt-2">
+        {% for n in account_notes %}
+        <div class="d-flex align-items-start gap-3 py-2 {% if not loop.last %}border-bottom{% endif %}">
+          <div class="text-nowrap small fw-medium" style="min-width:90px;color:var(--tt-slate)">
+            {{ n.date_label }}
+          </div>
+          <div class="flex-grow-1 small" style="white-space:pre-wrap;">{{ n.body }}</div>
+          <div class="text-nowrap text-end">
+            <small class="text-muted d-block" title="Added {{ n.created_at }}">
+              added {{ n.created_label }}
+            </small>
+            <form method="post" action="/admin/notes/{{ n.id }}/delete" class="d-inline m-0"
+                  onsubmit="return confirm('Delete this note?')">
+              <input type="hidden" name="csrf_token">
+              <button type="submit" class="btn btn-link btn-sm text-danger p-0 text-decoration-none" title="Delete note">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-muted small mt-3 mb-0">No notes yet. Notes show up as a marker on that day in the chart above.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {# Shared query string of active filters + search, reused by pagination links.
    Uses a namespace because {% set %} inside a {% for %} doesn't persist otherwise. #}
 {% set qns = namespace(qs='') %}
@@ -417,6 +475,23 @@ const PORTAL_MODE   = {{ 'true' if portal_mode else 'false' }};
 const WEEK_LEADS    = {{ weekly_chart_leads_json | safe }};
 const ALL_WEEKS     = {{ weekly_chart_weeks_json | safe }};
 const LEAD_BASE_URL = "{{ lead_base }}";
+const NOTES_BY_DATE = {{ notes_by_date_json | default('{}') | safe }};
+
+// Expand the notes panel (and scroll to it) — used by the chart date links.
+function openNotesPanel() {
+  const el = document.getElementById('notes-collapse');
+  if (!el) return;
+  bootstrap.Collapse.getOrCreateInstance(el, { toggle: false }).show();
+  document.getElementById('account-notes')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+// Deep link (#account-notes, e.g. after saving) opens the panel.
+if (location.hash === '#account-notes') openNotesPanel();
+document.getElementById('notes-collapse')?.addEventListener('show.bs.collapse', () => {
+  document.getElementById('notes-chevron')?.classList.replace('bi-chevron-down', 'bi-chevron-up');
+});
+document.getElementById('notes-collapse')?.addEventListener('hide.bs.collapse', () => {
+  document.getElementById('notes-chevron')?.classList.replace('bi-chevron-up', 'bi-chevron-down');
+});
 
 // ── Weekly bar chart ──────────────────────────────────────────────────────────
 const CHART_COLORS = {
@@ -513,7 +588,17 @@ function renderWeekChart() {
         if (showDayName) {
           html += `<div style="font-size:11px;font-weight:${isToday?600:400};color:${isToday?'var(--tt-slate)':'#64748b'};">${day.day}</div>`;
         }
-        html += `<div style="font-size:${showDayName?10:11}px;color:${isToday?'var(--tt-slate)':'#94a3b8'};font-weight:${isToday?600:400};white-space:nowrap;">${day.md}</div>`;
+        const dayNotes = NOTES_BY_DATE[day.date];
+        if (dayNotes && dayNotes.length) {
+          // A day with notes: the date becomes a link — hover shows the note(s), click opens the panel.
+          const tipHtml = dayNotes.map(n => n.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')).join('<hr class=\'my-1 opacity-50\'>');
+          html += `<a href="#account-notes" onclick="event.preventDefault(); openNotesPanel();"
+            data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-html="true" data-bs-title="${tipHtml}"
+            style="display:block;font-size:${showDayName?10:11}px;color:var(--tt-slate);font-weight:600;white-space:nowrap;text-decoration:underline dotted;text-underline-offset:2px;">
+            <i class="bi bi-journal-text" style="font-size:9px;"></i> ${day.md}</a>`;
+        } else {
+          html += `<div style="font-size:${showDayName?10:11}px;color:${isToday?'var(--tt-slate)':'#94a3b8'};font-weight:${isToday?600:400};white-space:nowrap;">${day.md}</div>`;
+        }
       }
       // Ad-impressions label (only when we have a stored value; hidden in dense 4W/6W views)
       if (day.impressions != null && !sparseLabels) {
