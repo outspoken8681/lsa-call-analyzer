@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Whisper supports up to 25 MB per file
+# OpenAI transcription accepts up to 25 MB per file
 MAX_FILE_SIZE_MB = 25
 
 
@@ -91,8 +91,13 @@ async def _label_speakers(transcript: str, business_type: str | None = None) -> 
 
 async def transcribe_audio(audio_path: str, business_type: str | None = None) -> dict:
     """
-    Transcribe an audio file using OpenAI Whisper.
+    Transcribe an audio file using OpenAI's gpt-transcribe model.
     Returns dict with transcript, transcription_status, and timestamps.
+
+    gpt-transcribe replaces whisper-1, which OpenAI shuts down on 2027-02-26.
+    It returns plain text only (no speaker labels, no duration), so speaker
+    labels still come from _label_speakers and call duration comes from the
+    scraper (Google's lead page).
     """
     path = Path(audio_path)
     if not path.exists():
@@ -112,20 +117,17 @@ async def transcribe_audio(audio_path: str, business_type: str | None = None) ->
     logger.info(f"Transcribing {path.name} ({file_size_mb:.2f} MB) [{biz}]...")
 
     try:
-        # NOTE: we deliberately do NOT pass a `prompt`. Whisper can hallucinate by
+        # NOTE: we deliberately do NOT pass a `prompt`. Whisper used to hallucinate by
         # echoing/looping the prompt text into the transcript on quiet or repetitive
         # audio (observed: a real 4-min call reduced to the prompt sentence repeated).
-        # The slight vocabulary bias a prompt gives is not worth that failure mode.
+        # Keep it off unless a newer model is shown not to do this.
         with open(path, "rb") as f:
             response = await client.audio.transcriptions.create(
-                model="whisper-1",
+                model="gpt-transcribe",
                 file=f,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"],
             )
 
-        raw_transcript = response.text.strip()
-        duration = getattr(response, "duration", None)
+        raw_transcript = (response.text or "").strip()
 
         transcript = await _label_speakers(raw_transcript, business_type)
         logger.info(f"Transcription complete: {len(transcript)} chars")
@@ -133,7 +135,6 @@ async def transcribe_audio(audio_path: str, business_type: str | None = None) ->
             "transcript": transcript,
             "transcription_status": "completed",
             "transcribed_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
-            **({"call_duration_seconds": int(duration)} if duration else {}),
         }
 
     except Exception as e:

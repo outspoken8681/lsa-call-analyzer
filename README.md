@@ -1,12 +1,12 @@
 # LSA Call Analyzer
 
-Pulls call recordings from Google Local Services Ads, transcribes them with OpenAI Whisper, and analyzes each call with Claude — all in a self-hosted web dashboard.
+Pulls call recordings from Google Local Services Ads, transcribes them with OpenAI gpt-transcribe, and analyzes each call with Claude — all in a self-hosted web dashboard.
 
 ## What it does
 
 - Logs into your Google LSA account via Playwright (you sign in once in a real browser window; the session is saved)
 - Navigates each lead detail page, intercepts the embedded MP3 audio, and downloads it
-- Transcribes the audio with Whisper
+- Transcribes the audio with OpenAI gpt-transcribe
 - Sends the transcript to Claude for structured analysis:
   - Was the call answered?
   - Lead qualification score (1–5)
@@ -76,7 +76,7 @@ If the scraper can't find audio on a lead, it's likely because:
 app/
   main.py          FastAPI routes and background task orchestration
   scraper.py       Playwright-based Google LSA scraper
-  transcriber.py   OpenAI Whisper transcription
+  transcriber.py   OpenAI gpt-transcribe transcription
   analyzer.py      Anthropic Claude analysis
   database.py      SQLite storage
   templates/       Jinja2 + Bootstrap 5 dashboard
