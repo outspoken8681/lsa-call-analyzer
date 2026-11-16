@@ -14,8 +14,12 @@ The same leads — same lead IDs — are still served by the Google Ads API:
 The recording URL downloads as MP3 with the API's OAuth bearer token, so no
 browser session is needed for these accounts.
 
-A client switches to this source when its `ads_customer_id` (the 10-digit Google
-Ads customer id the leads live in) is set on the Clients page.
+The API serves these resources for accounts Google has NOT moved yet too, so
+every client syncs from here once its `ads_customer_id` (the 10-digit Google Ads
+customer id its leads live in) is known. That id is found automatically by
+looking the client's own lead ids up across the manager's accounts
+(find_customer_for_leads) — lead ids are identical in the inbox and the API —
+or can be set by hand on the Clients page.
 
 Credentials (env):
   GOOGLE_ADS_CLIENT_ID / GOOGLE_ADS_CLIENT_SECRET   OAuth client (AdForge's)
@@ -44,6 +48,7 @@ API_VERSION = os.getenv("GOOGLE_ADS_API_VERSION", "v26")
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 _token: dict = {"value": None, "expires": 0.0}
+_accounts: dict = {"ids": None, "at": 0.0}
 _tz_cache: dict[str, str] = {}
 
 
@@ -288,6 +293,44 @@ async def download_recording(url: str, attempts: int = 3) -> bytes:
                 break
             await asyncio.sleep(2 * (i + 1))
     raise AdsApiError(f"Recording download failed: {status}")
+
+
+async def manager_accounts() -> list[str]:
+    """Enabled, non-manager accounts under GOOGLE_ADS_LOGIN_CUSTOMER_ID (cached 6 h)."""
+    login = normalize_customer_id(_env("GOOGLE_ADS_LOGIN_CUSTOMER_ID"))
+    if not login:
+        return []
+    if _accounts["ids"] is None or time.time() - _accounts["at"] > 6 * 3600:
+        rows = await search(login, """
+            SELECT customer_client.id FROM customer_client
+            WHERE customer_client.manager = false AND customer_client.status = 'ENABLED'""")
+        _accounts["ids"] = [str(r["customerClient"]["id"]) for r in rows]
+        _accounts["at"] = time.time()
+    return _accounts["ids"]
+
+
+async def find_customer_for_leads(lead_ids: list[str]) -> Optional[str]:
+    """
+    The Google Ads account whose Local Services leads include these lead ids
+    (a client's most recent ones), or None. When several accounts hold some of
+    them, the one holding the most wins.
+    """
+    ids = [str(int(i)) for i in lead_ids if str(i).isdigit()]
+    if not ids:
+        return None
+    best, best_n = None, 0
+    for cid in await manager_accounts():
+        try:
+            rows = await search(cid, "SELECT local_services_lead.id FROM local_services_lead "
+                                     f"WHERE local_services_lead.id IN ({', '.join(ids)})")
+        except AdsApiError as e:
+            logger.debug(f"Lead lookup skipped {cid}: {e}")
+            continue
+        if len(rows) > best_n:
+            best, best_n = cid, len(rows)
+            if best_n == len(ids):
+                break
+    return best
 
 
 def _is_lsa_campaign(campaign: dict) -> bool:

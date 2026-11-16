@@ -739,8 +739,10 @@ async def _persist_and_process_lead(client_id: int, lead: dict) -> None:
 # ── Google Ads API source (accounts Google moved to pay-per-lead PMax) ────────
 
 def _uses_ads_api(client: dict) -> bool:
-    """A client syncs from the Google Ads API once its Ads customer id is set
-    (its leads have left the Local Services inbox the scraper reads)."""
+    """A client syncs from the Google Ads API once its Ads customer id is known.
+    The API serves leads whether or not Google has moved the account to
+    pay-per-lead yet, so this is the normal path; the inbox scraper is the
+    fallback for a client whose account can't be matched."""
     return bool(ads_api.normalize_customer_id(client.get("ads_customer_id")))
 
 
@@ -749,7 +751,44 @@ def _can_sync(client: dict, browser_auth: bool) -> bool:
         return False
     if _uses_ads_api(client):
         return ads_api.enabled()
-    return bool(client.get("lead_list_url")) and browser_auth
+    # Unmatched: either the API match succeeds at sync time, or it scrapes.
+    return bool(client.get("lead_list_url")) and (browser_auth or ads_api.enabled())
+
+
+# client_id → time of the last failed match, so a client whose leads aren't in
+# any reachable account isn't re-searched across every account on every sync.
+_ads_match_misses: dict[int, float] = {}
+
+
+async def _try_match_ads_account(client: dict) -> bool:
+    """
+    Find the Google Ads account holding this client's leads (by looking its most
+    recent lead ids up across the manager's accounts) and switch the client to
+    the API for good. Mutates `client`. Returns True when the client uses the API.
+    """
+    if _uses_ads_api(client):
+        return True
+    if client.get("is_demo") or not ads_api.enabled():
+        return False
+    if _time.time() - _ads_match_misses.get(client["id"], 0) < 12 * 3600:
+        return False
+    recent = await get_all_leads(client["id"], limit=5, offset=0)
+    ids = [str(l["id"]) for l in recent]
+    try:
+        cid = await ads_api.find_customer_for_leads(ids) if ids else None
+    except Exception as e:
+        logger.warning(f"[{client['slug']}] Google Ads account match failed: {e}")
+        cid = None
+    if not cid:
+        _ads_match_misses[client["id"]] = _time.time()
+        logger.info(f"[{client['slug']}] No Google Ads account holds this client's leads"
+                    f"{'' if ids else ' (no leads stored yet)'} — staying on the inbox scraper.")
+        return False
+    await update_client(client["id"], {"ads_customer_id": cid})
+    client["ads_customer_id"] = cid
+    logger.info(f"[{client['slug']}] Matched to Google Ads account {cid} by lead id — "
+                f"syncing from the Google Ads API from now on.")
+    return True
 
 
 async def _materialize_api_lead(client: dict, rec: dict) -> dict:
@@ -855,9 +894,13 @@ async def _finish_sync(client: dict, new_leads: int) -> None:
 
 
 async def _scrape_and_process_all(client: dict, max_leads: int = 50):
-    """Scrape all leads for a client then transcribe + analyze."""
-    if _uses_ads_api(client):
+    """Sync a client's leads (Google Ads API when matched, else the inbox
+    scraper), then transcribe + analyze."""
+    if await _try_match_ads_account(client):
         return await _sync_via_ads_api(client, max_leads=max_leads)
+    if not await ensure_auth():
+        logger.info(f"[{client['slug']}] Skipped — no Google Ads match and the browser login has expired.")
+        return
     client_id = client["id"]
     count_before = await get_leads_count(client_id)
 
@@ -1726,7 +1769,7 @@ async def trigger_scrape(request: Request, background_tasks: BackgroundTasks, ma
             raise HTTPException(status_code=400, detail="Google Ads API credentials are not configured on the server.")
     elif not client.get("lead_list_url"):
         raise HTTPException(status_code=400, detail="Client has no lead list URL configured.")
-    elif not await ensure_auth():
+    elif not ads_api.enabled() and not await ensure_auth():
         raise HTTPException(status_code=401, detail="Not authenticated.")
     if client.get("is_demo"):
         raise HTTPException(status_code=400, detail="This is a demo account — nothing to sync.")

@@ -44,7 +44,7 @@
             <input type="text" name="google_account_id" class="form-control form-control-sm" placeholder="e.g. 8461344803">
           </div>
           <div class="mb-2">
-            <label class="form-label small fw-medium">Google Ads Customer ID for API sync <span class="text-muted fw-normal">(only for accounts Google moved to pay-per-lead)</span></label>
+            <label class="form-label small fw-medium">Google Ads Customer ID for API sync <span class="text-muted fw-normal">(optional — found automatically from the client's leads)</span></label>
             <input type="text" name="ads_customer_id" class="form-control form-control-sm font-monospace" placeholder="e.g. 919-907-9117">
           </div>
           <div class="mb-2">
@@ -134,9 +134,9 @@
             </div>
             <div class="col-12">
               <label class="form-label small fw-medium">Google Ads Customer ID for API sync
-                <span class="text-muted fw-normal">(set once Google has moved this account's LSA into Google Ads as a pay-per-lead campaign; leads then sync from the Google Ads API instead of the inbox)</span></label>
+                <span class="text-muted fw-normal">(filled in automatically on the first sync by matching this client's lead IDs; blank = not matched yet, so the Local Services inbox is scraped)</span></label>
               <input type="text" name="ads_customer_id" class="form-control form-control-sm font-monospace"
-                     value="{{ client.ads_customer_id or '' }}" placeholder="e.g. 9199079117 — leave blank to keep reading the Local Services inbox">
+                     value="{{ client.ads_customer_id or '' }}" placeholder="e.g. 9199079117 — leave blank to match automatically">
             </div>
             <div class="col-sm-6">
               <label class="form-label small fw-medium">Business Type <span class="text-muted fw-normal">(improves transcription accuracy)</span></label>
