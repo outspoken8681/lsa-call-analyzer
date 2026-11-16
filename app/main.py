@@ -66,7 +66,8 @@ from app.database import (
 from app.webhook import deliver as webhook_deliver
 from app.scraper import ensure_auth, open_login_browser, confirm_login, scrape_lead_audio, scrape_all_leads, run_diagnostics, get_lead_list, scrape_impressions_for_date, scrape_account_summary, AUTH_STATE_PATH
 from app.phone_lookup import lookup_phone_reputation, normalize_phone, to_json as phone_lookup_to_json
-from app.r2 import get_audio_bytes as r2_get_audio
+from app import ads_api
+from app.r2 import get_audio_bytes as r2_get_audio, upload_audio as r2_upload
 from app.tokens import verify_audio_token
 from app.transcriber import transcribe_audio
 
@@ -209,11 +210,11 @@ async def _scheduled_sync():
         return
     if not SYNC_ENABLED:
         return
-    if not await ensure_auth():
-        logger.info("[scheduler] Auto-sync skipped — not authenticated with Google.")
-        return
+    browser_auth = await ensure_auth()
+    if not browser_auth:
+        logger.info("[scheduler] Not authenticated with Google — inbox-scraped clients skipped.")
     clients = await get_all_clients()
-    eligible = [c for c in clients if c.get("lead_list_url") and not c.get("is_demo") and c.get("is_active", 1)]
+    eligible = [c for c in clients if _can_sync(c, browser_auth)]
     if not eligible:
         logger.info("[scheduler] Auto-sync skipped — no clients configured.")
         return
@@ -666,7 +667,17 @@ async def _process_lead(client_id: int, lead_id: str):
     needs_scrape = lead.get("scrape_status") != "completed" or (not is_message and not audio_on_disk)
     if needs_scrape:
         await update_lead(client_id, lead_id, {"scrape_status": "in_progress"})
-        scrape_result = await scrape_lead_audio(client, lead_id, lead.get("lead_url", ""))
+        if _uses_ads_api(client):
+            try:
+                recs = await ads_api.fetch_leads(ads_api.normalize_customer_id(client["ads_customer_id"]),
+                                                 lead_id=lead_id)
+                scrape_result = (await _materialize_api_lead(client, recs[0]) if recs else
+                                 {"scrape_status": "failed", "error_message": "Lead not found in Google Ads"})
+            except Exception as e:
+                scrape_result = {"scrape_status": "failed", "error_message": str(e)[:300]}
+            scrape_result.pop("id", None)
+        else:
+            scrape_result = await scrape_lead_audio(client, lead_id, lead.get("lead_url", ""))
         await update_lead(client_id, lead_id, scrape_result)
         if scrape_result.get("scrape_status") != "completed":
             return
@@ -701,8 +712,152 @@ async def _process_lead(client_id: int, lead_id: str):
             await _trigger_webhook_for_lead(client_id, lead_id)
 
 
+async def _persist_and_process_lead(client_id: int, lead: dict) -> None:
+    """Save + process each lead the instant it is read, so a mid-sync crash
+    never discards work already done. Shared by the scraper and the API source."""
+    existing = await get_lead(client_id, lead["id"])
+    already_done = existing and existing.get("analysis_status") == "completed"
+    # If Google gave us a real name and contact_name not already set, copy it over
+    google_name = _best_caller_name(lead)
+    if google_name and not (existing and existing.get("contact_name")):
+        lead["contact_name"] = google_name
+    await upsert_lead(client_id, lead)
+    if already_done:
+        logger.info(f"Lead {lead['id']} already analyzed, skipping")
+        return
+    is_message = lead.get("lead_type") == "message"
+    if lead.get("scrape_status") == "completed" and (lead.get("audio_path") or is_message):
+        await _transcribe_and_analyze(client_id, lead["id"])
+    elif lead.get("scrape_status") == "completed":
+        # Missed calls (no audio, no transcript) skip the analyze pipeline and
+        # thus never got spam-scored — but phone-reputation and cross-account
+        # signals don't need a transcript, and these calls matter most. Score
+        # them directly.
+        await _score_spam(client_id, lead["id"])
+
+
+# ── Google Ads API source (accounts Google moved to pay-per-lead PMax) ────────
+
+def _uses_ads_api(client: dict) -> bool:
+    """A client syncs from the Google Ads API once its Ads customer id is set
+    (its leads have left the Local Services inbox the scraper reads)."""
+    return bool(ads_api.normalize_customer_id(client.get("ads_customer_id")))
+
+
+def _can_sync(client: dict, browser_auth: bool) -> bool:
+    if client.get("is_demo") or not client.get("is_active", 1):
+        return False
+    if _uses_ads_api(client):
+        return ads_api.enabled()
+    return bool(client.get("lead_list_url")) and browser_auth
+
+
+async def _materialize_api_lead(client: dict, rec: dict) -> dict:
+    """
+    A normalized API lead → a full lead record, in the shape the scraper emits:
+    phone leads get their recording downloaded (local disk + R2); calls with no
+    recording are recorded as missed; message leads carry their thread as the
+    transcript.
+    """
+    lead = {k: v for k, v in rec.items() if not k.startswith("_")}
+    now = _datetime.now(_timezone.utc).replace(tzinfo=None).isoformat()
+    if lead["lead_type"] == "message":
+        if lead.get("transcript"):
+            lead.update({"is_answered": 1, "scrape_status": "completed",
+                         "transcription_status": "completed", "scraped_at": now})
+        else:
+            lead.update({"scrape_status": "failed", "error_message": "No message text in Google Ads yet"})
+        return lead
+    url = rec.get("_recording_url")
+    if not url:
+        lead.update({
+            "is_answered": 0,
+            "scrape_status": "completed",
+            "transcription_status": "completed",
+            "analysis_status": "completed",
+            "call_summary": "Missed call — no recording available.",
+            "scraped_at": now,
+        })
+        return lead
+    try:
+        audio = await ads_api.download_recording(url)
+    except Exception as e:
+        lead.update({"scrape_status": "failed", "error_message": str(e)[:300]})
+        return lead
+    audio_dir = Path(os.getenv("AUDIO_DIR", "audio")) / client["slug"]
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = audio_dir / f"{lead['id']}.mp3"
+    audio_path.write_bytes(audio)
+    r2_key = f"{client['slug']}/{lead['id']}.mp3"
+    uploaded = await r2_upload(str(audio_path), r2_key)
+    lead.update({
+        "audio_url": r2_key if uploaded else None,
+        "audio_path": str(audio_path),
+        "is_answered": 1,
+        "scrape_status": "completed",
+        "transcription_status": "pending",
+        "analysis_status": "pending",
+        "scraped_at": now,
+    })
+    return lead
+
+
+async def _sync_via_ads_api(client: dict, max_leads: int = 50, days: int = 30) -> None:
+    """Read the client's leads from the Google Ads API, then transcribe + analyze."""
+    client_id = client["id"]
+    cid = ads_api.normalize_customer_id(client.get("ads_customer_id"))
+    count_before = await get_leads_count(client_id)
+    try:
+        recs = await ads_api.fetch_leads(cid, days=days)
+    except Exception as e:
+        logger.error(f"[{client['slug']}] Google Ads API lead read failed: {e}")
+        return
+    logger.info(f"[{client['slug']}] Google Ads API: {len(recs)} lead(s) in the last {days} days.")
+    for rec in recs[:max_leads]:
+        try:
+            existing = await get_lead(client_id, rec["id"])
+            if existing and existing.get("analysis_status") == "completed":
+                # Done already — only keep Google's charge state current
+                # (charged → credited after a credit, etc.).
+                if rec.get("charge_status") and rec["charge_status"] != existing.get("charge_status"):
+                    await update_lead(client_id, rec["id"], {"charge_status": rec["charge_status"]})
+                continue
+            lead = await _materialize_api_lead(client, rec)
+            if existing:
+                # Keep anything the pipeline already finished for this lead.
+                for k in ("transcription_status", "analysis_status"):
+                    if existing.get(k) == "completed":
+                        lead.pop(k, None)
+            await _persist_and_process_lead(client_id, lead)
+        except Exception as e:
+            logger.exception(f"[{client['slug']}] Lead {rec.get('id')}: API sync error: {e}")
+    new_leads = max(0, await get_leads_count(client_id) - count_before)
+    logger.info(f"[{client['slug']}] Google Ads API sync complete. {new_leads} new lead(s).")
+    await _finish_sync(client, new_leads)
+
+
+async def _finish_sync(client: dict, new_leads: int) -> None:
+    # Accumulate today's new leads across all syncs; reset if it's a new day
+    today = _datetime.now(_EASTERN).strftime("%Y-%m-%d")
+    fresh = await get_client(client["id"])
+    last_date = (fresh.get("last_synced_at") or "")[:10]
+    daily_total = ((fresh.get("last_sync_new_leads") or 0) + new_leads) if last_date == today else new_leads
+
+    await update_client(client["id"], {
+        "last_synced_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S"),
+        "last_sync_new_leads": daily_total,
+    })
+
+    # Capture yesterday's ad-impressions count (a completed day) — best-effort.
+    await _capture_impressions(client, _datetime.now(_EASTERN).date() - timedelta(days=1))
+    # Refresh the rolling 30-day spend / charged-leads snapshot — best-effort.
+    await _capture_account_summary(client)
+
+
 async def _scrape_and_process_all(client: dict, max_leads: int = 50):
     """Scrape all leads for a client then transcribe + analyze."""
+    if _uses_ads_api(client):
+        return await _sync_via_ads_api(client, max_leads=max_leads)
     client_id = client["id"]
     count_before = await get_leads_count(client_id)
 
@@ -741,27 +896,7 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
     logger.info(f"[{client['slug']}] Starting full scrape (max {max_leads})...")
 
     async def _persist_and_process(lead: dict) -> None:
-        """Save + process each lead the instant it is scraped, so a mid-scrape
-        crash never discards work already done."""
-        existing = await get_lead(client_id, lead["id"])
-        already_done = existing and existing.get("analysis_status") == "completed"
-        # If Google gave us a real name and contact_name not already set, copy it over
-        google_name = _best_caller_name(lead)
-        if google_name and not (existing and existing.get("contact_name")):
-            lead["contact_name"] = google_name
-        await upsert_lead(client_id, lead)
-        if already_done:
-            logger.info(f"Lead {lead['id']} already analyzed, skipping")
-            return
-        is_message = lead.get("lead_type") == "message"
-        if lead.get("scrape_status") == "completed" and (lead.get("audio_path") or is_message):
-            await _transcribe_and_analyze(client_id, lead["id"])
-        elif lead.get("scrape_status") == "completed":
-            # Missed calls (no audio, no transcript) skip the analyze pipeline and
-            # thus never got spam-scored — but phone-reputation and cross-account
-            # signals don't need a transcript, and these calls matter most. Score
-            # them directly.
-            await _score_spam(client_id, lead["id"])
+        await _persist_and_process_lead(client_id, lead)
 
     try:
         await scrape_all_leads(client, max_leads=max_leads,
@@ -778,26 +913,26 @@ async def _scrape_and_process_all(client: dict, max_leads: int = 50):
     count_after = await get_leads_count(client_id)
     new_leads = max(0, count_after - count_before)
     logger.info(f"[{client['slug']}] Full scrape complete. {new_leads} new lead(s).")
-
-    # Accumulate today's new leads across all syncs; reset if it's a new day
-    today = _datetime.now(_EASTERN).strftime("%Y-%m-%d")
-    fresh = await get_client(client["id"])
-    last_date = (fresh.get("last_synced_at") or "")[:10]
-    daily_total = ((fresh.get("last_sync_new_leads") or 0) + new_leads) if last_date == today else new_leads
-
-    await update_client(client["id"], {
-        "last_synced_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S"),
-        "last_sync_new_leads": daily_total,
-    })
-
-    # Capture yesterday's ad-impressions count (a completed day) — best-effort.
-    await _capture_impressions(client, _datetime.now(_EASTERN).date() - timedelta(days=1))
-    # Refresh the rolling 30-day spend / charged-leads snapshot — best-effort.
-    await _capture_account_summary(client)
+    await _finish_sync(client, new_leads)
 
 
 async def _capture_impressions(client: dict, target_date) -> None:
     """Best-effort: scrape and store one day's ad impressions. Never raises."""
+    if _uses_ads_api(client):
+        # The API answers for a whole range at once, so refresh the last 14 days
+        # (fills any day a failed sync missed). Days absent from the API had
+        # zero impressions — Google omits all-zero rows.
+        try:
+            start = target_date - timedelta(days=13)
+            m = await ads_api.fetch_metrics(ads_api.normalize_customer_id(client["ads_customer_id"]),
+                                            start, target_date)
+            for i in range(14):
+                d = (start + timedelta(days=i)).isoformat()
+                await upsert_daily_metric(client["id"], d, m["daily_impressions"].get(d, 0))
+            logger.info(f"[{client['slug']}] Stored API impressions {start}..{target_date}.")
+        except Exception as e:
+            logger.warning(f"[{client['slug']}] API impressions capture failed: {e}")
+        return
     if not client.get("lead_list_url"):
         return
     try:
@@ -811,6 +946,22 @@ async def _capture_impressions(client: dict, target_date) -> None:
 
 async def _capture_account_summary(client: dict) -> None:
     """Best-effort: refresh the rolling 30-day spend + charged-leads totals. Never raises."""
+    if _uses_ads_api(client):
+        try:
+            cid = ads_api.normalize_customer_id(client["ads_customer_id"])
+            end = _datetime.now(_EASTERN).date()
+            m = await ads_api.fetch_metrics(cid, end - timedelta(days=29), end)
+            leads = await ads_api.fetch_leads(cid, days=30)
+            charged = sum(1 for l in leads if l.get("charge_status") == "Charged")
+            await update_client(client["id"], {
+                "r30_spend": m["cost"],
+                "r30_leads": charged,
+                "r30_updated_at": _datetime.now(_EASTERN).strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            logger.info(f"[{client['slug']}] Stored API 30-day summary: spend={m['cost']} leads={charged}.")
+        except Exception as e:
+            logger.warning(f"[{client['slug']}] API account-summary capture failed: {e}")
+        return
     if not client.get("lead_list_url"):
         return
     try:
@@ -1089,6 +1240,7 @@ async def admin_create_client(
     portal_password: str = Form(""),
     business_type: str = Form(""),
     google_account_id: str = Form(""),
+    ads_customer_id: str = Form(""),
     _csrf: None = Depends(_csrf_form),
 ):
     if not _is_admin(request):
@@ -1102,6 +1254,8 @@ async def admin_create_client(
         extra["business_type"] = business_type.strip()
     if google_account_id.strip():
         extra["google_account_id"] = google_account_id.strip()
+    if ads_api.normalize_customer_id(ads_customer_id):
+        extra["ads_customer_id"] = ads_api.normalize_customer_id(ads_customer_id)
     if extra:
         await update_client(client["id"], extra)
     return RedirectResponse("/admin/clients", status_code=302)
@@ -1119,6 +1273,7 @@ async def admin_update_client(
     webhook_secret: str = Form(""),
     business_type: str = Form(""),
     google_account_id: str = Form(""),
+    ads_customer_id: str = Form(""),
     _csrf: None = Depends(_csrf_form),
 ):
     if not _is_admin(request):
@@ -1130,6 +1285,7 @@ async def admin_update_client(
         "webhook_url":        webhook_url.strip() or None,
         "business_type":      business_type.strip() or None,
         "google_account_id":  google_account_id.strip() or None,
+        "ads_customer_id":    ads_api.normalize_customer_id(ads_customer_id),
     }
     if webhook_secret.strip():
         updates["webhook_secret"] = webhook_secret.strip()
@@ -1296,12 +1452,13 @@ async def scan_status(request: Request):
 async def scan_all_clients(request: Request, background_tasks: BackgroundTasks, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
-    if not await ensure_auth():
-        raise HTTPException(status_code=401, detail="Not authenticated with Google.")
     if _scan_state["running"]:
         raise HTTPException(status_code=409, detail="Scan already in progress.")
+    browser_auth = await ensure_auth()
     clients = await get_all_clients()
-    eligible = [c for c in clients if c.get("lead_list_url") and not c.get("is_demo") and c.get("is_active", 1)]
+    eligible = [c for c in clients if _can_sync(c, browser_auth)]
+    if not eligible and not browser_auth:
+        raise HTTPException(status_code=401, detail="Not authenticated with Google.")
     if not eligible:
         raise HTTPException(status_code=400, detail="No clients have a lead list URL configured.")
     background_tasks.add_task(_scan_all_clients_task, eligible)
@@ -1560,14 +1717,17 @@ async def auth_status(request: Request):
 async def trigger_scrape(request: Request, background_tasks: BackgroundTasks, max_leads: int = 50, _csrf: None = Depends(_csrf_header)):
     if not _is_admin(request):
         raise HTTPException(status_code=403)
-    if not await ensure_auth():
-        raise HTTPException(status_code=401, detail="Not authenticated.")
     ctx = await _admin_context(request)
     client = ctx["current_client"]
     if not client:
         raise HTTPException(status_code=400, detail="No client selected.")
-    if not client.get("lead_list_url"):
+    if _uses_ads_api(client):
+        if not ads_api.enabled():
+            raise HTTPException(status_code=400, detail="Google Ads API credentials are not configured on the server.")
+    elif not client.get("lead_list_url"):
         raise HTTPException(status_code=400, detail="Client has no lead list URL configured.")
+    elif not await ensure_auth():
+        raise HTTPException(status_code=401, detail="Not authenticated.")
     if client.get("is_demo"):
         raise HTTPException(status_code=400, detail="This is a demo account — nothing to sync.")
     background_tasks.add_task(_scrape_and_process_all, client, max_leads)

@@ -115,6 +115,10 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_spend REAL;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_leads INTEGER;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS r30_updated_at TEXT;
+-- Google Ads customer id to read leads from through the Google Ads API. Set once
+-- Google has moved the account's Local Services Ads to a pay-per-lead Performance
+-- Max campaign — its leads then stop appearing in the inbox the scraper reads.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS ads_customer_id TEXT;
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id              SERIAL PRIMARY KEY,
