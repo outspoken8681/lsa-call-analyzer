@@ -2,9 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Minimal system packages needed before playwright --with-deps runs
+# Minimal system packages needed before playwright --with-deps runs.
+# libatomic1: Playwright's bundled Node driver needs it (1.65+ fails without it).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget ca-certificates \
+    wget ca-certificates libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies (cached layer — only rebuilds when requirements.txt changes)
